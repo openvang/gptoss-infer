@@ -1,0 +1,102 @@
+{
+  "llama_cpp_commit": "d81235049384534c167caea52b85a694f6103d14",
+  "gguf": "gpt-oss-20b-MXFP4.gguf",
+  "gguf_sha256": "27cd6c432c7672cb812a92f611cf3ba7bbc35928262bb1e1253ff4ee6ae35901",
+  "gpu": "NVIDIA GeForce RTX 5090",
+  "driver": "595.71.05",
+  "power_limit_w": "525.00",
+  "power_default_limit_w": "575.00",
+  "clocks_max_sm_mhz": "3090",
+  "date_utc": "2026-10-08T05:14:10Z",
+  "flags": "-ngl 99 -fa 1 -b 2048 -ub 2048",
+  "results": [
+    {
+      "variant": "default",
+      "test": "pp512",
+      "depth": 0,
+      "tok_s": 19652.157366,
+      "stddev": 3114.282858,
+      "reps": 5
+    },
+    {
+      "variant": "default",
+      "test": "pp2048",
+      "depth": 0,
+      "tok_s": 21352.504367,
+      "stddev": 766.067841,
+      "reps": 5
+    },
+    {
+      "variant": "default",
+      "test": "pp8192",
+      "depth": 0,
+      "tok_s": 24022.132628,
+      "stddev": 57.435307,
+      "reps": 5
+    },
+    {
+      "variant": "default",
+      "test": "tg128",
+      "depth": 0,
+      "tok_s": 366.043812,
+      "stddev": 1.517081,
+      "reps": 5
+    },
+    {
+      "variant": "default",
+      "test": "tg128",
+      "depth": 4096,
+      "tok_s": 358.706511,
+      "stddev": 7.653173,
+      "reps": 3
+    },
+    {
+      "variant": "default",
+      "test": "tg128",
+      "depth": 16384,
+      "tok_s": 334.252944,
+      "stddev": 10.743856,
+      "reps": 3
+    },
+    {
+      "variant": "default",
+      "test": "tg128",
+      "depth": 32768,
+      "tok_s": 309.518297,
+      "stddev": 5.496245,
+      "reps": 3
+    },
+    {
+      "variant": "GGML_CUDA_GRAPH_OPT=1",
+      "test": "tg128",
+      "depth": 0,
+      "tok_s": 403.532848,
+      "stddev": 3.904026,
+      "reps": 3
+    },
+    {
+      "variant": "GGML_CUDA_GRAPH_OPT=1",
+      "test": "tg128",
+      "depth": 4096,
+      "tok_s": 375.53957,
+      "stddev": 8.715537,
+      "reps": 3
+    },
+    {
+      "variant": "GGML_CUDA_GRAPH_OPT=1",
+      "test": "tg128",
+      "depth": 16384,
+      "tok_s": 346.856568,
+      "stddev": 12.148234,
+      "reps": 3
+    },
+    {
+      "variant": "GGML_CUDA_GRAPH_OPT=1",
+      "test": "tg128",
+      "depth": 32768,
+      "tok_s": 310.315104,
+      "stddev": 5.923535,
+      "reps": 3
+    }
+  ]
+}
