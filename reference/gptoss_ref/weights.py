@@ -32,19 +32,19 @@ class Weights:
         """Rows `index` (a 1-D LongTensor) of a 2-D tensor, e.g. embedding lookups."""
         return self.get(name)[index]
 
-    def expert(self, layer, e):
-        """(w1 [2I, H], b1 [2I], w2 [H, I], b2 [H]) for expert `e`. Rows of w1 alternate glu (even) / linear (odd)."""
+    def expert(self, layer, e, device="cpu"):
+        """(w1 [2I, H], b1 [2I], w2 [H, I], b2 [H]) for expert `e`, on `device`. Rows of w1 alternate glu (even)
+        and linear (odd). MXFP4 blocks are moved to `device` before decoding, so a GPU decodes them itself."""
         p = _layer(layer, "mlp.experts.")
+        raw = lambda name: self._raw_slice(p + name, e).to(device)
         if self.has(p + "gate_up_proj_blocks"):
-            w1 = mxfp4.dequant(self._raw_slice(p + "gate_up_proj_blocks", e), self._raw_slice(p + "gate_up_proj_scales", e))
-            w2 = mxfp4.dequant(self._raw_slice(p + "down_proj_blocks", e), self._raw_slice(p + "down_proj_scales", e))
+            w1 = mxfp4.dequant(raw("gate_up_proj_blocks"), raw("gate_up_proj_scales"))
+            w2 = mxfp4.dequant(raw("down_proj_blocks"), raw("down_proj_scales"))
         else:
             # Hugging Face dense layout stores [E, in, out]; transpose to [out, in] like the MXFP4 blocks.
-            w1 = self._raw_slice(p + "gate_up_proj", e).to(torch.float32).t().contiguous()
-            w2 = self._raw_slice(p + "down_proj", e).to(torch.float32).t().contiguous()
-        b1 = self._raw_slice(p + "gate_up_proj_bias", e).to(torch.float32)
-        b2 = self._raw_slice(p + "down_proj_bias", e).to(torch.float32)
-        return w1, b1, w2, b2
+            w1 = raw("gate_up_proj").to(torch.float32).t().contiguous()
+            w2 = raw("down_proj").to(torch.float32).t().contiguous()
+        return w1, raw("gate_up_proj_bias").to(torch.float32), w2, raw("down_proj_bias").to(torch.float32)
 
     def _raw_slice(self, name, e):
         raise NotImplementedError

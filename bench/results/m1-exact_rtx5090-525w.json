@@ -1,0 +1,6 @@
+{"device_bytes": 14598357300, "graph": true, "tokens": 128, "reps": 5, "results": [
+  {"test": "tg128", "depth": 0, "median_tok_s": 283.9, "stddev": 0.0},
+  {"test": "tg128", "depth": 4096, "median_tok_s": 270.7, "stddev": 0.0},
+  {"test": "tg128", "depth": 16384, "median_tok_s": 241.1, "stddev": 0.0},
+  {"test": "tg128", "depth": 32768, "median_tok_s": 216.9, "stddev": 0.1}
+]}

@@ -27,13 +27,21 @@ def dequant(blocks, scales, dtype=torch.float32):
     if bool((scales == 255).any()):
         raise ValueError("E8M0 scale 0xFF encodes NaN in the OCP MX spec; refusing to decode it")
     # One lookup per byte -> (low-nibble value, high-nibble value); ~3x faster than two nibble gathers on CPU.
-    vals = F.embedding(blocks.long(), _byte_lut(dtype)).flatten(-2)    # [..., G, 32], low nibble first
-    scale = torch.exp2(scales.to(dtype) - 127)                         # exact powers of two
-    return (vals * scale.unsqueeze(-1)).flatten(-2)
+    vals = F.embedding(blocks.long(), _byte_lut(dtype, blocks.device)).flatten(-2)   # [..., G, 32]
+    return (vals * e8m0_to_float(scales).to(dtype).unsqueeze(-1)).flatten(-2)
 
 
-def _byte_lut(dtype):
-    return torch.tensor([[FP4_VALUES[b & 0x0F], FP4_VALUES[b >> 4]] for b in range(256)], dtype=dtype)
+def e8m0_to_float(scales):
+    """uint8 E8M0 -> float32 2**(s - 127), built from the bit pattern so it is exact on every device
+    (exp2 is not guaranteed exact on GPUs). s == 0 is the subnormal 2**-127."""
+    bits = scales.to(torch.int32) << 23
+    bits = torch.where(scales == 0, torch.full_like(bits, 0x00400000), bits)
+    return bits.view(torch.float32)
+
+
+def _byte_lut(dtype, device=None):
+    return torch.tensor([[FP4_VALUES[b & 0x0F], FP4_VALUES[b >> 4]] for b in range(256)], dtype=dtype,
+                        device=device)
 
 
 def quantize(weights):
