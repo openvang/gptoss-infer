@@ -115,14 +115,23 @@ class Ready:
 class GitHub:
     """Everything the bot does on GitHub, through the gh CLI."""
 
-    def __init__(self, repo):
-        self.repo = repo
+    def __init__(self, repo, user=None):
+        self.repo, self.user = repo, user
 
     def gh(self, *args, input=None):
         return run(["gh", *args], input=input)
 
     def login(self):
         return self.gh("api", "user", "--jq", ".login").strip()
+
+    def ensure_account(self):
+        """With a user set, act only as that account: if gh's active github.com account is another one, switch back."""
+        if not self.user or self.login() == self.user:
+            return
+        print(f"gh: the active account is not {self.user}; switching to it", flush=True)
+        self.gh("auth", "switch", "--hostname", "github.com", "--user", self.user)
+        if self.login() != self.user:
+            raise RuntimeError(f"gh could not switch to {self.user}")
 
     def main_sha(self):
         return self.gh("api", f"repos/{self.repo}/commits/main", "--jq", ".sha").strip()
@@ -324,6 +333,7 @@ class Bot:
         self.guide = f"https://github.com/{github.repo}/blob/main/CONTRIBUTING.md"
 
     def setup(self):
+        self.gh.ensure_account()
         self.login = self.gh.login()
         self.box.setup()
         wanted = {name: (COLORS[key], f"gptoss eval verdict: {key}") for key, name in policy.LABELS.items()}
@@ -367,6 +377,7 @@ class Bot:
     # -- one round ------------------------------------------------------------------------------------------------
 
     def run_once(self):
+        self.gh.ensure_account()
         main = self.gh.main_sha()
         prs = self.enforce_cap([p for p in self.gh.open_prs() if p["base"] == "main"], main)
         queue, ready, waiting = [], [], []
@@ -608,6 +619,7 @@ def code_changed(checkout):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--repo", required=True)
+    ap.add_argument("--gh-user", help="the account the bot acts as; gh is switched back to it if another is active")
     where = ap.add_mutually_exclusive_group(required=True)
     where.add_argument("--box", help="user@host of a fixed GPU box")
     where.add_argument("--vast-env", help="env file with VAST_API_KEY (or VAST): rent RTX 5090 VMs on vast.ai")
@@ -631,7 +643,7 @@ def main():
     if args.vast_env:
         box.vast = vast.Vast(args.vast_cli, vast.read_key(Path(args.vast_env).expanduser()), box.ssh_ok,
                              max_dph=args.vast_max_dph, idle_minutes=args.vast_idle_minutes)
-    bot = Bot(GitHub(args.repo), box)
+    bot = Bot(GitHub(args.repo, args.gh_user), box)
     bot.setup()
     while True:
         try:

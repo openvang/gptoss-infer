@@ -61,9 +61,10 @@ While a PR waits on the bot, one status label shows where it is. The verdict rep
 
 ## Running as a service
 
-The bot runs as a systemd user service that starts at boot (`loginctl enable-linger`) and needs no login session:
-`gh` uses a token file instead of the desktop keyring, and SSH uses only the bot's key. It runs from its own clone
-of `main` and pulls it on every start. Every external call is time-limited, so a hung command can't stall it. With `--restart-on-update`, it exits after any round where
+The bot runs as a systemd user service that starts at boot (`loginctl enable-linger`). `gh` uses the maintainer
+account's keyring login; with `--gh-user`, the bot switches `gh` back to that account whenever another one is active.
+SSH uses only the bot's key. The bot runs from its own clone of `main` and pulls it on every start. Every external
+call is time-limited, so a hung command can't stall it. With `--restart-on-update`, it exits after any round where
 `main` has changed `eval/`, so systemd restarts it on the new code.
 
 ```ini
@@ -73,10 +74,9 @@ Description=gptoss-infer PR eval bot
 
 [Service]
 Environment=APP=%h/.local/share/gptoss-eval-bot/app
-EnvironmentFile=%h/.config/gptoss-eval-bot/github.env
-UnsetEnvironment=SSH_AUTH_SOCK DBUS_SESSION_BUS_ADDRESS
+UnsetEnvironment=SSH_AUTH_SOCK
 ExecStartPre=-/usr/bin/git -C ${APP} pull --ff-only -q
-ExecStart=/usr/bin/python3 -u ${APP}/eval/bot.py --repo openvang/gptoss-infer --restart-on-update \
+ExecStart=/usr/bin/python3 -u ${APP}/eval/bot.py --repo openvang/gptoss-infer --gh-user <account> --restart-on-update \
     --vast-env <env file with VAST_API_KEY> --vast-cli <vastai> --key <ssh key> \
     --golden %h/.local/share/gptoss-eval-bot/golden_v1.safetensors
 Restart=always
@@ -87,15 +87,13 @@ WantedBy=default.target
 ```
 
 ```bash
-mkdir -p -m 700 ~/.config/gptoss-eval-bot      # GH_TOKEN=<token> in github.env, mode 600
 git clone -q https://github.com/openvang/gptoss-infer ~/.local/share/gptoss-eval-bot/app
 cp reference/goldens/golden_v1.safetensors ~/.local/share/gptoss-eval-bot/     # release artifact
 systemctl --user daemon-reload && systemctl --user enable --now gptoss-eval-bot
 journalctl --user -u gptoss-eval-bot -f                                          # the bot's log
 ```
 
-The token acts as the maintainer account. A fine-grained token limited to this repository needs: Pull requests,
-Issues and Contents read/write, Metadata read. One evaluation by hand, on a provisioned box:
+`gh` must stay logged in as that account, and its keyring must be unlocked: after a reboot, a login unlocks it. One evaluation by hand, on a provisioned box:
 
 ```bash
 /data/venv/bin/python eval/run_eval.py --repo /data/gptoss-eval/repo --base <sha> --cand <sha> \

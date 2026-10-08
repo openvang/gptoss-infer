@@ -46,6 +46,9 @@ class FakeGitHub:
     def login(self):
         return "maint"
 
+    def ensure_account(self):
+        pass
+
     def main_sha(self):
         return self.main
 
@@ -335,3 +338,23 @@ def test_a_hung_github_call_on_one_pr_does_not_stop_the_round():
     gh.files = hang_on_2
     b.run_once()
     assert gh.merged == [1] and gh.prs[2]["state"] == "open"
+
+
+def test_the_bot_switches_gh_back_to_its_account():
+    calls, active = [], ["someone-else"]
+
+    class Recording(bot.GitHub):
+        def gh(self, *args, input=None):
+            calls.append(args)
+            if args[:2] == ("api", "user"):
+                return active[0] + "\n"
+            if args[:2] == ("auth", "switch"):
+                active[0] = args[args.index("--user") + 1]
+            return ""
+    Recording("o/r", "matedev01").ensure_account()
+    assert ("auth", "switch", "--hostname", "github.com", "--user", "matedev01") in calls and active == ["matedev01"]
+    calls.clear()
+    Recording("o/r", "matedev01").ensure_account()                     # already active: nothing to do
+    assert calls == [("api", "user", "--jq", ".login")]
+    Recording("o/r").ensure_account()                                  # no account configured: no check
+    assert calls == [("api", "user", "--jq", ".login")]
