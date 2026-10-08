@@ -124,8 +124,15 @@ int gptoss_kernel_attention(const float* q, const void* k_cache, const void* v_c
 int gptoss_kernel_router(const void* W, const float* b, const float* x, int E, int H, int k, int32_t* ids,
                          float* weights) {
     return guard([&] {
-        gptoss::launch_router(static_cast<const __nv_bfloat16*>(W), b, x, E, H, k, ids, weights, nullptr);
+        DevBuf<float> logits(32);
+        DevBuf<unsigned> done(1);
+        if (cudaMemset(done.p, 0, sizeof(unsigned)) != cudaSuccess) throw std::runtime_error("clear done");
+        gptoss::launch_router(static_cast<const __nv_bfloat16*>(W), b, x, E, H, k, logits.p, done.p, ids, weights,
+                              nullptr);
         sync_check("router");
+        unsigned left = 1;
+        if (cudaMemcpy(&left, done.p, sizeof(unsigned), cudaMemcpyDeviceToHost) != cudaSuccess || left != 0)
+            throw std::runtime_error("router: completion counter not reset");
     });
 }
 

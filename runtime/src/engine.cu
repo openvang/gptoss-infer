@@ -206,6 +206,9 @@ Engine::Engine(const std::string& dir, int max_ctx, size_t vram_budget) : cfg_(C
         y_ = alloc<float>(size_t(cfg_.top_k) * H);
         gate_w_ = alloc<float>(size_t(cfg_.top_k));
         ids_ = alloc<int>(size_t(cfg_.top_k));
+        router_logits_ = alloc<float>(size_t(E));
+        router_done_ = alloc<unsigned>(1);
+        CUDA_CHECK(cudaMemsetAsync(router_done_, 0, sizeof(unsigned), stream_));
         logits_ = alloc<float>(size_t(V));
         score_work_ = alloc<float>(score_workspace_floats());
         score_f_ = alloc<float>(size_t(score_cap_) + 2);
@@ -247,7 +250,7 @@ void Engine::forward(cudaStream_t s) {
         launch_attention(qkv_, L.kc, L.vc, L.sinks, pos_d_, L.window, max_ctx_, part_, attn_, s);
         launch_gemv_bf16(L.wo, attn_, L.bo, x_, x_, H, QD, s);                 // x += o_proj(attn) + b
         launch_rmsnorm(x_, L.ln2, h_, H, cfg_.eps, s);
-        launch_router(L.wr, L.br, h_, cfg_.experts, H, cfg_.top_k, ids_, gate_w_, s);
+        launch_router(L.wr, L.br, h_, cfg_.experts, H, cfg_.top_k, router_logits_, router_done_, ids_, gate_w_, s);
         launch_moe_gateup(L.gu_blocks, L.gu_scales, L.gu_bias, h_, ids_, a_, cfg_.top_k, H, I, cfg_.swiglu_alpha,
                           cfg_.swiglu_limit, s);
         launch_moe_down(L.dn_blocks, L.dn_scales, L.dn_bias, a_, ids_, y_, cfg_.top_k, H, I, s);

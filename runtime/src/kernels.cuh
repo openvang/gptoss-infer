@@ -33,8 +33,10 @@ void launch_attention(const float* q, const kv_t* k_cache, const kv_t* v_cache, 
                       const int* d_pos, int window, int max_ctx, float* part, float* out, cudaStream_t s);
 size_t attn_workspace_floats();
 // Router: logits = W[E,H] x + b; top-k (sorted, ties to the lower index); softmax over the k selected logits.
-void launch_router(const __nv_bfloat16* W, const float* b, const float* x, int E, int H, int k, int* ids,
-                   float* weights, cudaStream_t s);
+// logits[E] and done[1] are scratch owned by the caller; *done must be 0 before the first launch and stays 0 after
+// each one. Launches sharing the scratch must not run concurrently.
+void launch_router(const __nv_bfloat16* W, const float* b, const float* x, int E, int H, int k, float* logits,
+                   unsigned* done, int* ids, float* weights, cudaStream_t s);
 // For each of k selected experts: a[e][j] = swiglu(W1[e] x + b1[e]) with W1 in MXFP4 [E][2I][H/32][16].
 void launch_moe_gateup(const uint8_t* blocks, const uint8_t* scales, const float* bias, const float* x,
                        const int* ids, float* a, int k, int H, int I, float alpha, float limit, cudaStream_t s);
