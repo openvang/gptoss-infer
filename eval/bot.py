@@ -56,6 +56,7 @@ class Bot:
         return run(["git", "-C", str(cwd or self.mirror), *args]).strip()
 
     def setup(self):
+        self.login = self.gh("api", "user", "--jq", ".login").strip()
         self.work.mkdir(parents=True, exist_ok=True)
         if not self.mirror.exists():
             run(["gh", "repo", "clone", self.a.repo, str(self.mirror), "--", "-q"])
@@ -76,7 +77,9 @@ class Bot:
         return self.gh("api", f"repos/{self.a.repo}/commits/main", "--jq", ".sha").strip()
 
     def markers(self, number):
-        bodies = self.gh("api", f"repos/{self.a.repo}/issues/{number}/comments", "--paginate", "--jq", ".[].body")
+        # Only the bot's own comments count: anyone can post a comment that looks like a marker.
+        jq = f'.[] | select(.user.login == "{self.login}") | .body'
+        bodies = self.gh("api", f"repos/{self.a.repo}/issues/{number}/comments", "--paginate", "--jq", jq)
         return MARKER_RE.findall(bodies)
 
     def needs_eval(self, pr, main):
