@@ -1,0 +1,110 @@
+# Gittensor compute-pool manifest for the gptoss-infer release image.
+# Spec: https://github.com/entrius/gittensor-compute-template/blob/main/MANIFEST.md (v0) and manifest.schema.json.
+#
+# STATUS: DRAFT. The runtime does not exist yet, so the image digest is a placeholder and every value marked
+# "provisional" is a guess to be replaced by a measurement before qualification. The artifacts are final: they are
+# the official checkpoint pinned to one commit, file by file, with hashes taken from reference/weights.lock.json.
+name: gpt-oss-20b
+version: 1
+description: OpenAI gpt-oss-20b (MXFP4 experts) chat with harmony tool calling on gptoss-infer, one RTX 5090 per instance
+runtime: gptoss-infer
+image: ghcr.io/owner/gptoss-infer:0.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000000
+placement:
+  gpu_types: {include: [RTX5090]}
+  cards_per_instance: 1
+  min_vram_gb: 24            # provisional: 13.8 GB of weights as shipped, plus the KV pool and workspace
+  max_load_s: 120            # provisional: measure cold load from pre-staged artifacts
+run:
+  env:
+    GPTOSS_NO_DOWNLOAD: '1'               # weights are pre-staged; a missing file must fail loudly
+    MODEL_DIR: /models/gpt-oss-20b
+    MODEL_NAME: gpt-oss-20b               # the id /v1/models reports and the gateway republishes
+    CTX: '131072'                         # provisional: the model's full context; confirm KV sizing at concurrency
+    GPTOSS_MAX_OUTPUT_TOKENS: '16384'     # the runtime's own output cap (the gateway never caps max_tokens)
+  volumes: [{name: models, mount: /models, read_only: true}]
+network:
+  egress: []                 # none: the controller stages every artifact before start
+artifacts:
+  # Per-file https sources instead of hf://openai/gpt-oss-20b: the whole repo is ~41 GB because it also carries
+  # the original/ and metal/ copies of the weights. These are the only files the runtime reads (plus the licence).
+  - path: /models/gpt-oss-20b/config.json
+    source: https://huggingface.co/openai/gpt-oss-20b/resolve/6cee5e81ee83917806bbde320786a8fb61efebee/config.json
+    revision: 6cee5e81ee83917806bbde320786a8fb61efebee
+    sha256: 3a2a26ded679375b7928ddeca59764df7cea83220c1961035f6d6e232659e9ce
+  - path: /models/gpt-oss-20b/generation_config.json
+    source: https://huggingface.co/openai/gpt-oss-20b/resolve/6cee5e81ee83917806bbde320786a8fb61efebee/generation_config.json
+    revision: 6cee5e81ee83917806bbde320786a8fb61efebee
+    sha256: f9970ada892d2d1f72e3ed0a6535ccebadd11897318794ca671d8c7014c957da
+  - path: /models/gpt-oss-20b/tokenizer.json
+    source: https://huggingface.co/openai/gpt-oss-20b/resolve/6cee5e81ee83917806bbde320786a8fb61efebee/tokenizer.json
+    revision: 6cee5e81ee83917806bbde320786a8fb61efebee
+    sha256: 0614fe83cadab421296e664e1f48f4261fa8fef6e03e63bb75c20f38e37d07d3
+  - path: /models/gpt-oss-20b/model.safetensors.index.json
+    source: https://huggingface.co/openai/gpt-oss-20b/resolve/6cee5e81ee83917806bbde320786a8fb61efebee/model.safetensors.index.json
+    revision: 6cee5e81ee83917806bbde320786a8fb61efebee
+    sha256: 0e085b977c4c9942f85938828e8c989ed7d5cdabf852e4da6a67c116cd502cd1
+  - path: /models/gpt-oss-20b/model-00000-of-00002.safetensors
+    source: https://huggingface.co/openai/gpt-oss-20b/resolve/6cee5e81ee83917806bbde320786a8fb61efebee/model-00000-of-00002.safetensors
+    revision: 6cee5e81ee83917806bbde320786a8fb61efebee
+    sha256: 16d0f997dcfc4462089d536bffe51b4bcea2f872f5c430be09ef8ed392312427
+  - path: /models/gpt-oss-20b/model-00001-of-00002.safetensors
+    source: https://huggingface.co/openai/gpt-oss-20b/resolve/6cee5e81ee83917806bbde320786a8fb61efebee/model-00001-of-00002.safetensors
+    revision: 6cee5e81ee83917806bbde320786a8fb61efebee
+    sha256: 4fbe328ab445455d6f58dc73852b85873bd626986310abd91cd4d2ce3245eaea
+  - path: /models/gpt-oss-20b/model-00002-of-00002.safetensors
+    source: https://huggingface.co/openai/gpt-oss-20b/resolve/6cee5e81ee83917806bbde320786a8fb61efebee/model-00002-of-00002.safetensors
+    revision: 6cee5e81ee83917806bbde320786a8fb61efebee
+    sha256: a18106b209e9ab35c3406db4f6f12a927364a058b21e9d1373d682e20674b303
+  - path: /models/gpt-oss-20b/LICENSE
+    source: https://huggingface.co/openai/gpt-oss-20b/resolve/6cee5e81ee83917806bbde320786a8fb61efebee/LICENSE
+    revision: 6cee5e81ee83917806bbde320786a8fb61efebee
+    sha256: 58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd
+  - path: /models/gpt-oss-20b/USAGE_POLICY
+    source: https://huggingface.co/openai/gpt-oss-20b/resolve/6cee5e81ee83917806bbde320786a8fb61efebee/USAGE_POLICY
+    revision: 6cee5e81ee83917806bbde320786a8fb61efebee
+    sha256: d6387ef7985019c45db8d9801e6ac5fd9f98f02b9f1c56f8c5af80c3e8f385d0
+health:
+  # /health must turn 503 when the CUDA context is lost; /v1/models can keep answering 200 after that.
+  http: {path: /health, port: 8080, expect_status: 200}
+  interval_s: 60
+  failure_threshold: 3
+entry_canary:
+  # Both canaries are tool calls: one call proves the weights decode and that `tools` reach the harmony renderer.
+  # reasoning_effort low keeps the analysis channel short enough for max_tokens.
+  - type: http
+    http: {method: POST, path: /v1/chat/completions, port: 8080}
+    body:
+      messages: [{role: user, content: "What is 17 × 23? Use the multiply tool."}]
+      max_tokens: 256
+      temperature: 0
+      reasoning_effort: low
+      tools:
+        - type: function
+          function:
+            name: multiply
+            parameters: {type: object, properties: {a: {type: number}, b: {type: number}}, required: [a, b]}
+    pass: {status: 200, regex: '(?=[\s\S]*"finish_reason":\s*"tool_calls")(?=[\s\S]*"name":\s*"multiply")(?=[\s\S]*\\"[ab]\\":\s*17\b)(?=[\s\S]*\\"[ab]\\":\s*23\b)'}
+  - type: http
+    http: {method: POST, path: /v1/chat/completions, port: 8080}
+    body:
+      messages: [{role: user, content: "What's the weather in Paris right now? Use the tool."}]
+      max_tokens: 256
+      temperature: 0
+      reasoning_effort: low
+      tools:
+        - type: function
+          function:
+            name: get_weather
+            parameters: {type: object, properties: {city: {type: string}}, required: [city]}
+    pass: {status: 200, regex: '(?=[\s\S]*"finish_reason":\s*"tool_calls")(?=[\s\S]*"name":\s*"get_weather")(?=[\s\S]*\\"city\\":\s*\\"Paris)'}
+# profile: recorded at qualification (decode_tps_single, decode_tps_aggregate, ttft_ms_band, vram_gb); never pay.
+front_door:
+  type: gateway-openai
+  port: 8080
+  concurrency: 8             # provisional: measure at agent-sized prompts with a tool schema, not at the canary
+  routes:
+    - {path: /v1/chat/completions, method: POST, stream: true}
+    - {path: /v1/models, method: GET}
+drain:
+  type: requests
+  max_s: 120                 # provisional: 16384 output tokens at >= 150 tok/s single-stream is ~110 s

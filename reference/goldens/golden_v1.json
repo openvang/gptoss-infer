@@ -1,0 +1,103 @@
+{
+  "format": "gptoss-golden/1",
+  "file": "golden_v1.safetensors",
+  "sha256": "50f532754edd297d50e32fde7758350e541498230b48ef54e95a304cdb27795e",
+  "items": [
+    {
+      "id": "qa-capital",
+      "tokens": 104,
+      "tokens_sha256": "9c242b322885a8fc5b04ad20ec385c29a4badaa2ea3a96aeeee05af987137461"
+    },
+    {
+      "id": "math-speed",
+      "tokens": 159,
+      "tokens_sha256": "c2def8922834f49d881602bd0ee14bbc934a3171302f559cd2f731ffc0c9ccf3"
+    },
+    {
+      "id": "code-palindrome",
+      "tokens": 196,
+      "tokens_sha256": "4e990f02c19004c8a185be1ef892ddc9ad2e463f8213f3ad742be205ce32dc79"
+    },
+    {
+      "id": "tool-weather",
+      "tokens": 279,
+      "tokens_sha256": "6b277e4dc8c724d691dffa14b35005fd63dc4a7a8be17c350c551fbb9e05e2a9"
+    },
+    {
+      "id": "spanish",
+      "tokens": 159,
+      "tokens_sha256": "c96087e5b74190890a5c3b302dde198799d6dc036ac54b80d7ab21a812f7b22b"
+    },
+    {
+      "id": "chinese",
+      "tokens": 129,
+      "tokens_sha256": "cea7e78b3b9d87e5fa3d0db3ab36a5640bdfb8be462c76f9ed8d3b8a46fdb36d"
+    },
+    {
+      "id": "japanese",
+      "tokens": 186,
+      "tokens_sha256": "cf02518ed3412b70fb27293b4417188532215df4d453e5fac0418858dd9f2aae"
+    },
+    {
+      "id": "json-extract",
+      "tokens": 161,
+      "tokens_sha256": "7c73dec10e525cf96069f2c09c3eeed15d1d172fbe9a18b3fbe5d8e6c2f842ba"
+    },
+    {
+      "id": "multi-turn",
+      "tokens": 135,
+      "tokens_sha256": "9d589502c8c9ebc9a6d3a83ee01194b00983119e7affbfd4b42eb0d6615e9e81"
+    },
+    {
+      "id": "logic-high",
+      "tokens": 275,
+      "tokens_sha256": "d24dc36a51a228b9e700ebb4fa7a83e0cd64668b4511319c7ab878002a6c1f27"
+    },
+    {
+      "id": "code-explain",
+      "tokens": 2065,
+      "tokens_sha256": "71921a8ce709fbd404564abf7c529a70975a9e1de8f2592afebb23274be958ec"
+    },
+    {
+      "id": "long-doc",
+      "tokens": 5442,
+      "tokens_sha256": "93f4c419f7324902f77d820ab9f87ee72e6d11e09504219b01f703e32fbfa906"
+    }
+  ],
+  "reference_sha256": "3333ecc9bf79d48168b07edae380b516c88f9c950f766916f25df0ef2153655f",
+  "torch": "2.14.1+cpu",
+  "threads": 8,
+  "python": "3.12.3",
+  "machine": "x86_64",
+  "created_utc": "2026-10-07T20:09:30Z",
+  "model": {
+    "repo": "openai/gpt-oss-20b",
+    "revision": "6cee5e81ee83917806bbde320786a8fb61efebee"
+  },
+  "corpus": {
+    "file": "golden_v1.jsonl",
+    "sha256": "e5b320c6ac10d53a69e9f14955705ce7960f0326a57e8658f2767dff007ea036",
+    "ids": [
+      "qa-capital",
+      "math-speed",
+      "code-palindrome",
+      "tool-weather",
+      "spanish",
+      "chinese",
+      "japanese",
+      "json-extract",
+      "multi-turn",
+      "logic-high",
+      "code-explain",
+      "long-doc"
+    ]
+  },
+  "harmony": {
+    "package": "openai-harmony",
+    "version": "0.0.8",
+    "encoding": "HARMONY_GPT_OSS",
+    "auto_drop_analysis": false
+  },
+  "k": 64,
+  "elapsed_s": 1685.7
+}

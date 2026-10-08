@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+# Golden distributions are large and published as release artifacts; their .json manifests (which pin them by
+# sha256) are committed.
+reference/goldens/*.safetensors
+reference/goldens/*.log
+build/

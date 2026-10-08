@@ -1,0 +1,24 @@
+gptoss-infer
+Copyright (c) 2026 gptoss-infer contributors. Licensed under the MIT License (see LICENSE).
+
+Third-party material
+====================
+
+openai/gpt-oss (Apache License 2.0), https://github.com/openai/gpt-oss
+  reference/gptoss_ref/ implements the model math described by gpt_oss/torch/model.py and weights.py, and
+  reference/tests/test_attention.py contains a transcription of that file's `sdpa` function, used as the
+  specification the chunked attention is tested against.
+
+openai/gpt-oss-20b model weights (Apache License 2.0, plus OpenAI's gpt-oss usage policy),
+https://huggingface.co/openai/gpt-oss-20b
+  This repository does not contain or redistribute the weights. reference/weights.lock.json and
+  docker/manifest.yaml pin them by commit and hash; the runtime image's manifest stages the model's LICENSE and
+  USAGE_POLICY beside the weights.
+
+entrius/gittensor-compute-template, https://github.com/entrius/gittensor-compute-template
+  docker/manifest.yaml follows that repository's manifest format (MANIFEST.md, manifest.schema.json); its two
+  entry-canary pass regexes are taken from the template's example manifest.
+
+gittensor-ai-lab/sparkinfer (MIT License), https://github.com/gittensor-ai-lab/sparkinfer
+  The runtime layout and evaluation mechanism are modelled on SparkInfer. When SparkInfer source files are
+  copied into this repository, they keep their MIT notice and are listed here.
