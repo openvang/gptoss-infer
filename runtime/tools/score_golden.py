@@ -22,7 +22,7 @@ def load_lib(path):
     P, I32 = ctypes.c_void_p, ctypes.c_int
     lib.gptoss_last_error.restype = ctypes.c_char_p
     lib.gptoss_create.restype = P
-    lib.gptoss_create.argtypes = [ctypes.c_char_p, I32]
+    lib.gptoss_create.argtypes = [ctypes.c_char_p, I32, ctypes.c_longlong]
     lib.gptoss_destroy.argtypes = [P]
     for name in ("gptoss_reset",):
         getattr(lib, name).argtypes = [P]
@@ -55,7 +55,7 @@ def main():
         sys.exit("golden file does not match its manifest")
     records, meta = golden.load(gfile)
     max_ctx = max(len(r["tokens"]) for r in records)
-    engine = lib.gptoss_create(args.model_dir.encode(), max_ctx)
+    engine = lib.gptoss_create(args.model_dir.encode(), max_ctx, 0)
     if not engine:
         sys.exit(f"create failed: {lib.gptoss_last_error().decode()}")
     ok(lib.gptoss_use_graph(engine, int(args.graph)))

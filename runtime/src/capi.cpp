@@ -11,7 +11,7 @@ using gptoss::Engine;
 
 struct gptoss_engine {
     Engine impl;
-    gptoss_engine(const char* dir, int max_ctx) : impl(dir, max_ctx) {}
+    gptoss_engine(const char* dir, int max_ctx, long long budget) : impl(dir, max_ctx, budget > 0 ? size_t(budget) : 0) {}
 };
 
 namespace {
@@ -50,9 +50,9 @@ struct DevBuf {
 
 extern "C" {
 
-gptoss_engine* gptoss_create(const char* model_dir, int max_ctx) {
+gptoss_engine* gptoss_create(const char* model_dir, int max_ctx, long long vram_budget_bytes) {
     gptoss_engine* e = nullptr;
-    guard([&] { e = new gptoss_engine(model_dir, max_ctx); });
+    guard([&] { e = new gptoss_engine(model_dir, max_ctx, vram_budget_bytes); });
     return e;
 }
 
@@ -66,6 +66,11 @@ int gptoss_reset(gptoss_engine* e) { return guard([&] { e->impl.reset(); }); }
 int gptoss_use_graph(gptoss_engine* e, int on) { return guard([&] { e->impl.use_graph(on != 0); }); }
 int gptoss_step(gptoss_engine* e, int token) { return guard([&] { e->impl.step(token); }); }
 int gptoss_logits(gptoss_engine* e, float* out) { return guard([&] { e->impl.copy_logits(out); }); }
+
+int gptoss_prefill(gptoss_engine* e, const int32_t* tokens, int n, const int32_t* ids, int k, float* lp,
+                   int32_t* argmax, float* target_lp) {
+    return guard([&] { e->impl.prefill(tokens, n, ids, k, lp, argmax, target_lp); });
+}
 
 int gptoss_score(gptoss_engine* e, const int32_t* ids, int k, int target, float* lp, int32_t* argmax,
                  float* target_lp, float* lse) {
