@@ -1,49 +1,96 @@
 # Contributing
 
-**Scored contributions are not open yet.** The runtime and the scoring bot don't exist. This file states the
-rules they will follow, so that the instruments are built to match.
+Make gpt-oss-20b faster on the RTX 5090 without changing what it computes. Every pull request is measured
+automatically on a dedicated RTX 5090.
+- **Faster, with accuracy kept:** the PR is labelled with a tier and merged.
+- **Otherwise:** it is closed with the measurements.
 
-## How a pull request will be scored
+## How a PR is evaluated
 
-1. **Opt in with evidence.** Tick "tested on RTX 5090" and paste before/after numbers. The bot re-measures
-   everything; your numbers only decide whether it spends GPU time.
-2. **Isolated measurement.** `main` and your PR are built in fresh, separate containers on the same card. Each
-   container has no credentials and no network, and the weights are mounted read-only and hash-checked. A driver
-   outside your build sends the workload through the server API and times it.
-3. **Correctness first, on every scored axis.**
-   - The golden gate: top-1 agreement and KL against `reference/` goldens.
-   - Token-exact output against `main` on that axis's own workload: packed vs single-row, cache hit vs miss, long
-     context.
-   - Harmony and tool-call tests.
+The eval bot picks up each new PR head (drafts and PRs labelled `hold` are skipped). It merges the PR onto the
+current `main` and evaluates that result against `main` (`eval/run_eval.py`):
 
-   A faster path that changes outputs scores zero.
-4. **Statistics, not single runs.**
-   - `main` and the PR run interleaved, at least 5 pairs per axis.
-   - A gain counts only when its confidence interval clears the noise floor, which is measured nightly from
-     `main`-vs-`main` runs.
-   - Multiple axes are corrected for.
-   - L and XL candidates get a confirmation run.
-5. **A persistent frontier.** Each axis keeps its best-ever measurement, and tiers are earned only above it.
-   Restoring performance that `main` lost is a bug fix: it is welcome, but it is not paid as a speedup.
-6. **A human merges.** The bot labels a PR and recommends merge-ready; a maintainer reads the diff and merges.
-   The bot cannot bypass branch protection.
-7. **Pay follows the merged commit.** The tier comes from the signed verdict for the exact SHA that was merged.
+1. **Isolation.** Both commits are built and run in fresh containers with no network, read-only weights and no
+   credentials. The harness and the golden data always come from `main`, never from your PR.
+2. **Correctness.** The golden corpus (`reference/goldens/golden_v1`, 9,278 positions) is run through both
+   `gptoss_step` (decode) and `gptoss_prefill`. Each path must pass every check in `eval/policy.py`.
 
-## Axes (planned)
+   | Check (each path) | Requirement |
+   |---|---|
+   | Generated-token top-1 agreement | ≥ 0.993 |
+   | Generated-token mean KL | ≤ 1e-3 |
+   | Generated-token p99 KL | ≤ 0.012 |
+   | All-position mean KL | ≤ 0.019 |
+   | Generated-token KL against `main`'s | no more than 25 % worse |
 
-- **At launch:** single-stream decode at 4k and 32k context, with a floor at 128.
-- **With batched prefill:** prefill at 4k and 32k.
-- **With the serving engine:** output tokens per second for chat 1024/256 at 4, 16 and 64 concurrent requests,
-  with a time-to-first-token guard.
-- **Research axis:** speculative decoding with a drafter, required to be byte-identical to plain decode under
-  greedy sampling.
-- **Guards throughout:** the golden gate, harmony and tool-call tests, 128k decode, and packed-vs-single-row
-  equivalence.
+3. **Memory.** The engine process may peak at **24 GiB** of the 5090's 32 GiB. This is measured from outside the
+   engine. The rest of the card is reserved for the speech-to-text and text-to-speech models planned for the
+   same device.
+4. **Speed.** Five interleaved `main`/PR pairs on real tokens. The timed runs must compute the same log-probs as
+   `main`'s. The axes:
+
+   | Axis | What it measures |
+   |---|---|
+   | `decode@128` | tok/s decoding 128 tokens after a 128-token prompt |
+   | `decode@4k` | the same, after a 4,096-token prompt |
+   | `prefill@4k` | tok/s ingesting the 4,096-token prompt through `gptoss_prefill` |
+
+5. **Verdict.** For each axis, the bot computes the 99 % confidence interval of the PR/main ratio. The PR earns
+   the tier of its best axis, judged by the interval's low end:
+
+   | Tier | Speedup |
+   |---|---|
+   | `eval:XS` | ≥ 2 % |
+   | `eval:S` | ≥ 3.5 % |
+   | `eval:M` | ≥ 6 % |
+   | `eval:L` | ≥ 10 % |
+   | `eval:XL` | ≥ 18 % |
+
+   The PR gets `eval:REJECT` if any of these happens:
+   - an axis regresses by more than 2 % (with confidence);
+   - a correctness or memory check fails;
+   - the build breaks.
+
+   Otherwise it gets `eval:none`.
+
+## What happens next
+
+| Verdict | Action |
+|---|---|
+| `eval:XS` … `eval:XL` | Merged (squash) at the evaluated commit. If `main` moved meanwhile, the PR is re-evaluated first. |
+| `eval:none`, `eval:REJECT` | Closed, with the measurements in a comment. Push a fix and reopen to be evaluated again. |
+| Conflict with `main` | Comment asking for a rebase. Stays open. |
+| Touches maintainer-owned paths | `eval:skipped`. Stays open for a maintainer. Not scored. |
+
+PRs from org members and collaborators are labelled but never closed by the bot.
+
+## Where to work
+
+- `runtime/src/` (kernels, engine) and `runtime/include/gptoss/gptoss.h`. Keep the C API compatible: the harness
+  drives your build through it.
+- `gptoss_prefill` currently runs one decode step per token. A real batched prefill must produce the same
+  distributions, and it will move `prefill@4k`.
+- See `runtime/README.md` for the M1 profile (where the time goes).
+
+## What you can't change in a scored PR
+
+Maintainer-owned paths: `eval/`, `reference/`, `docker/manifest.yaml`, `.github/`, `bench/baselines/`. They
+define how PRs are measured. Propose changes to them in an issue.
 
 ## Not allowed
 
-- **Changing what an axis measures.** For example, swapping the drafter on a speculative axis, or tuning to the
-  benchmark prompt.
-- **Copying another PR's diff,** and running several accounts. Both are detected and blocked.
-- **Touching maintainer-owned paths in a scored PR:** `reference/`, `eval/`, `docker/manifest.yaml`, `.github/`.
-  Propose changes to those in an issue.
+- **Changing what is measured:** special-casing the golden or bench tokens, or detecting the harness.
+- **Changing the model's arithmetic** beyond the correctness bounds above.
+- **Copying another PR,** or using several accounts.
+
+Each is grounds for closing PRs and blocking the account.
+
+## Before you open a PR
+
+```bash
+cmake -B build -G Ninja -DCMAKE_CUDA_ARCHITECTURES=120a && cmake --build build -j
+GPTOSS_LIB=build/libgptoss.so PYTHONPATH=reference python -m pytest -q runtime/tests
+PYTHONPATH=reference python runtime/tools/score_golden.py --lib build/libgptoss.so \
+    --model-dir /path/to/gpt-oss-20b --golden reference/goldens/golden_v1 --out /tmp/cand.safetensors
+./build/gptoss-bench /path/to/gpt-oss-20b
+```
