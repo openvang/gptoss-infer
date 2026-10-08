@@ -4,8 +4,13 @@ A Blackwell-native inference runtime for **OpenAI gpt-oss-20b on one RTX 5090**,
 open, benchmark-scored pull requests: the mechanism SparkInfer runs on Bittensor SN74, applied to a different
 model and with a stricter trust model.
 
-**Status: step 1 of the build plan.** The correctness anchor, the pinned weights and the compute-pool manifest
-exist. The C++/CUDA runtime is next. Nothing here serves requests yet.
+**Status: baseline engine and contribution mechanism.**
+- **Engine (M1):** a correct, single-sequence decode engine. It matches the fp32 reference to the precision of
+  its FP16 KV cache.
+- **Speed:** contributors make it fast. Every pull request is measured on an RTX 5090 and merged when it is
+  faster and keeps accuracy (see [CONTRIBUTING.md](CONTRIBUTING.md)).
+- **Memory:** the engine must stay within 24 GiB, so speech-to-text and text-to-speech models can later share
+  the card.
 
 ## Layout
 
@@ -13,8 +18,9 @@ exist. The C++/CUDA runtime is next. Nothing here serves requests yet.
 |---|---|---|
 | [`reference/`](reference/) | **done** | fp32 reference forward, golden next-token distributions, and the gate every engine change is judged by. 25 CPU tests, cross-checked against transformers. |
 | [`docker/manifest.yaml`](docker/manifest.yaml) | draft | The Gittensor compute-pool manifest: 9 pinned artifacts and 2 tool-call canaries; it validates against the pool's schema. The image digest and measured numbers are placeholders. |
-| `runtime/`, `kernels/`, `server/` | next | SparkInfer's infrastructure (paged KV, scheduler, prefix cache, OpenAI-compatible server), plus a new gpt-oss model class |
-| `eval/` | later | The PR-scoring bot, built after the runtime exists |
+| [`runtime/`](runtime/) | M1 | C++/CUDA decode engine and C API, with kernel tests, a golden scoring tool and a benchmark |
+| [`eval/`](eval/) | v1 | the PR evaluation mechanism: isolated GPU runs, golden gates, the VRAM budget, paired timing, the bot that merges or closes |
+| [`bench/`](bench/) | | llama.cpp baseline script and results; engine results by milestone |
 
 ## The target
 
