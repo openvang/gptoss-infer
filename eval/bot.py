@@ -201,7 +201,8 @@ class Box:
     # -- SSH to the current box: a rented VM gets its own known_hosts file, trusted on first use ------------------
 
     def _opts(self, iid):
-        opts = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=30"]
+        # Only the bot's key: an agent offering other keys first could hit the server's MaxAuthTries.
+        opts = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=30", "-o", "IdentitiesOnly=yes"]
         if iid is not None:
             opts += ["-o", f"UserKnownHostsFile={self.work / f'known_hosts-{iid}'}", "-o", "StrictHostKeyChecking=accept-new"]
         return opts
