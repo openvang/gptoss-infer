@@ -1,0 +1,15 @@
+# Reference harness (CPU). Versions are the ones golden_v1 was produced with; the golden manifest records torch.
+# torch: install the CPU build with  pip install --index-url https://download.pytorch.org/whl/cpu torch==2.14.1
+torch==2.14.1
+numpy==2.5.3
+safetensors==0.8.0
+openai-harmony==0.0.8
+tokenizers==0.23.2
+tiktoken==0.14.0
+huggingface_hub==1.33.0
+pytest==9.1.1
+# only for tests/test_vs_transformers.py and tests/test_rope.py (independent cross-check)
+transformers==5.19.0
+# only for validating docker/manifest.yaml against the compute-pool schema
+jsonschema==4.26.0
+PyYAML==6.0.3

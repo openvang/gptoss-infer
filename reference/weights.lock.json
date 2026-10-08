@@ -1,0 +1,66 @@
+{
+  "repo": "openai/gpt-oss-20b",
+  "revision": "6cee5e81ee83917806bbde320786a8fb61efebee",
+  "files": {
+    "LICENSE": {
+      "size": 11357,
+      "sha256": null,
+      "git_blob_sha1": "7a4a3ea2424c09fbe48d455aed1eaa94d9124835"
+    },
+    "USAGE_POLICY": {
+      "size": 200,
+      "sha256": null,
+      "git_blob_sha1": "b030f63aecc61cbaf2316a7b6401254f4312df74"
+    },
+    "chat_template.jinja": {
+      "size": 16738,
+      "sha256": null,
+      "git_blob_sha1": "dc7bb11927d29f653ba2740f2db2c688fd77592f"
+    },
+    "config.json": {
+      "size": 1806,
+      "sha256": null,
+      "git_blob_sha1": "8fb5a4a03376ab5a12afd94b4ed93da61edf5b1c"
+    },
+    "generation_config.json": {
+      "size": 177,
+      "sha256": null,
+      "git_blob_sha1": "86f91466555bd40e3de0b1edee3d5d82f4ccdbfe"
+    },
+    "model-00000-of-00002.safetensors": {
+      "size": 4792272488,
+      "sha256": "16d0f997dcfc4462089d536bffe51b4bcea2f872f5c430be09ef8ed392312427",
+      "git_blob_sha1": null
+    },
+    "model-00001-of-00002.safetensors": {
+      "size": 4798702184,
+      "sha256": "4fbe328ab445455d6f58dc73852b85873bd626986310abd91cd4d2ce3245eaea",
+      "git_blob_sha1": null
+    },
+    "model-00002-of-00002.safetensors": {
+      "size": 4170342232,
+      "sha256": "a18106b209e9ab35c3406db4f6f12a927364a058b21e9d1373d682e20674b303",
+      "git_blob_sha1": null
+    },
+    "model.safetensors.index.json": {
+      "size": 36355,
+      "sha256": null,
+      "git_blob_sha1": "ae08521471ab125be4af84d0e51ecfc245830119"
+    },
+    "special_tokens_map.json": {
+      "size": 98,
+      "sha256": null,
+      "git_blob_sha1": "73bd12e55e2004cdfff088f85092b39dba2ccdd0"
+    },
+    "tokenizer.json": {
+      "size": 27868174,
+      "sha256": "0614fe83cadab421296e664e1f48f4261fa8fef6e03e63bb75c20f38e37d07d3",
+      "git_blob_sha1": null
+    },
+    "tokenizer_config.json": {
+      "size": 4200,
+      "sha256": null,
+      "git_blob_sha1": "c021cddb0a9dd35b1bf83a9f145be2d9b3757891"
+    }
+  }
+}
