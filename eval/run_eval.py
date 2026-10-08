@@ -30,7 +30,6 @@ from gptoss_ref import compare, golden  # noqa: E402
 
 IMAGE = "gptoss-eval:1"
 MODEL = "gpt-oss-20b"
-PROTECTED = ("eval/", "reference/", "docker/manifest.yaml", ".github/", "bench/baselines/")
 SCORE_CTX = 8192
 BENCH = [{"name": "s128", "prompt": 128, "decode": 128}, {"name": "s4k", "prompt": 4096, "decode": 128}]
 AXIS_SOURCE = {"decode@128": ("s128", "decode_tok_s"), "decode@4k": ("s4k", "decode_tok_s"),
@@ -120,7 +119,7 @@ def evaluate(args, run, verdict):
     repo, models = Path(args.repo), Path(args.models)
     changed = git(repo, "diff", "--name-only", verdict["base"], verdict["cand"]).splitlines()
     verdict["changed_files"] = changed
-    touched = [f for f in changed if f.startswith(PROTECTED)]
+    touched = [f for f in changed if f.startswith(policy.PROTECTED)]
     if touched:
         verdict.update(label="skipped", tier=None, reasons=[f"touches maintainer-owned paths: {', '.join(touched)}"])
         return

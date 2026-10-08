@@ -1,14 +1,37 @@
 # Contributing
 
-Make gpt-oss-20b faster on the RTX 5090 without changing what it computes. Every pull request is measured
-automatically on a dedicated RTX 5090.
-- **Faster, with accuracy kept:** the PR is labelled with a tier and merged.
+Make gpt-oss-20b faster on the RTX 5090 without changing what it computes. Pull requests that change the
+runtime are measured automatically, in rounds, on a dedicated RTX 5090.
+- **Faster, with accuracy kept:** the PR earns a tier label. Each round's largest gain is merged.
 - **Otherwise:** it is closed with the measurements.
+
+## Before the GPU: lanes and proof
+
+The bot sorts each PR by the files it changes:
+
+| The PR changes | What happens |
+|---|---|
+| only `runtime/` and `CMakeLists.txt` | scored: evaluated once it has RTX 5090 proof |
+| runtime code and other files | not evaluated until you split it: a scored PR plus a separate one |
+| no runtime code (docs, tools, scripts) | not scored; a maintainer reviews it |
+| any maintainer-owned path | `eval:skipped`; a maintainer reviews it |
+
+A scored PR needs **RTX 5090 proof** in its description. The PR template has the section:
+- Tick `- [x] Tested on RTX 5090`.
+- Fill the before/after table with `gptoss-bench` numbers from your own RTX 5090. Keep the row labels: the bot
+  reads them. At least one column must show after > before.
+
+| Proof | What happens |
+|---|---|
+| box not ticked | the PR is closed; tick it, fill the table and reopen |
+| box ticked, no column faster | `needs-benchmark`: not evaluated; the description is re-read every round |
+
+Ticking the box without running on an RTX 5090 is grounds for blocking the account.
 
 ## How a PR is evaluated
 
-The eval bot picks up each new PR head (drafts and PRs labelled `hold` are skipped). It merges the PR onto the
-current `main` and evaluates that result against `main` (`eval/run_eval.py`):
+Each round, the bot merges every waiting PR onto the same `main` and evaluates that result against `main`
+(`eval/run_eval.py`):
 
 1. **Isolation.** Both commits are built and run in fresh containers with no network, read-only weights and no
    credentials. The harness and the golden data always come from `main`, never from your PR.
@@ -57,12 +80,21 @@ current `main` and evaluates that result against `main` (`eval/run_eval.py`):
 
 | Verdict | Action |
 |---|---|
-| `eval:XS` … `eval:XL` | Merged (squash) at the evaluated commit. If `main` moved meanwhile, the PR is re-evaluated first. |
-| `eval:none`, `eval:REJECT` | Closed, with the measurements in a comment. Push a fix and reopen to be evaluated again. |
-| Conflict with `main` | Comment asking for a rebase. Stays open. |
-| Touches maintainer-owned paths | `eval:skipped`. Stays open for a maintainer. Not scored. |
+| a tier, and the round's largest gain | `merge-first`: squash-merged at the evaluated commit |
+| a tier, but another PR gained more | `re-evaluate`: measured again on the new `main`, so only your gain on top counts |
+| `eval:none`, `eval:REJECT` | closed with the measurements; push a new commit and reopen to be evaluated again |
+| does not merge cleanly onto `main` | `needs-rebase`: rebase and push |
 
-PRs from org members and collaborators are labelled but never closed by the bot.
+The round's largest gain is the highest low end of a 99 % interval on any axis. If `main` moves during a round,
+nothing merges and every verified PR is measured again on the new `main`.
+
+Limits:
+- **Open PRs:** at most 5 per contributor; the newest beyond that are closed.
+- **Inactivity:** a PR waiting on you (`needs-benchmark`, `needs-rebase` or a split request) is closed 2 days
+  after the bot's last comment if nothing happens. Push a commit and reopen to continue.
+- **`hold`:** a maintainer-only label. The bot does not evaluate, merge or close the PR. Drafts are not
+  evaluated.
+- **Org members and collaborators** skip the proof, the limits and every close.
 
 ## Where to work
 
@@ -92,5 +124,8 @@ cmake -B build -G Ninja -DCMAKE_CUDA_ARCHITECTURES=120a && cmake --build build -
 GPTOSS_LIB=build/libgptoss.so PYTHONPATH=reference python -m pytest -q runtime/tests
 PYTHONPATH=reference python runtime/tools/score_golden.py --lib build/libgptoss.so \
     --model-dir /path/to/gpt-oss-20b --golden reference/goldens/golden_v1 --out /tmp/cand.safetensors
-./build/gptoss-bench /path/to/gpt-oss-20b
+./build/gptoss-bench /path/to/gpt-oss-20b --depths 128,4096    # on main, then on your branch
 ```
+
+For the PR template's table, copy each `median_tok_s`: `tg128` at depth 128 (decode@128), `tg128` at
+depth 4096 (decode@4k) and `pp4096` (prefill@4k).

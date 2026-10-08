@@ -7,8 +7,8 @@ model and with a stricter trust model.
 **Status: baseline engine and contribution mechanism.**
 - **Engine (M1):** a correct, single-sequence decode engine. It matches the fp32 reference to the precision of
   its FP16 KV cache.
-- **Speed:** contributors make it fast. Every pull request is measured on an RTX 5090 and merged when it is
-  faster and keeps accuracy (see [CONTRIBUTING.md](CONTRIBUTING.md)).
+- **Speed:** contributors make it fast. Runtime pull requests are measured on an RTX 5090 in rounds, and each
+  round's largest speedup that keeps accuracy is merged (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 - **Memory:** the engine must stay within 24 GiB, so speech-to-text and text-to-speech models can later share
   the card.
 

@@ -5,11 +5,12 @@ This directory is maintainer-owned. A PR that touches it is not scored.
 | File | Runs where | What |
 |---|---|---|
 | `policy.py` | everywhere | every threshold: golden gates, the 24 GiB VRAM budget, tier bands, 99 % paired intervals |
-| `bot.py` | trusted host with `gh` | polls open PRs, merges each onto `main`, ships both commits to the GPU box as a git bundle, runs `run_eval.py` there, posts the verdict, labels, then merges or closes |
+| `bot.py` | trusted host with `gh` | runs rounds: sorts open PRs into lanes, checks RTX 5090 proof, ships each waiting PR (merged onto `main`) to the GPU box as a git bundle, runs `run_eval.py` there, posts and labels the verdict, merges the round's largest verified speedup, closes what can't be scored, enforces the open-PR limit and the stale close |
 | `run_eval.py` | GPU box host | exports both commits, builds and measures each in fresh containers, judges, writes `verdict.json` |
 | `driver/driver.py` | inside the eval container | drives one build's C API, writes raw results; judges nothing |
 | `image/Dockerfile` | GPU box | the eval image: a digest-pinned CUDA 13.0 devel base, plus cmake, ninja, python3 and numpy |
 | `tests/test_policy.py` | anywhere | policy unit tests, including an A/A false-tier rate check |
+| `tests/test_bot.py` | anywhere | bot rounds against an in-memory GitHub and GPU box |
 
 ## Trust model
 

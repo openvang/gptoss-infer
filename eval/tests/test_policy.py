@@ -65,3 +65,52 @@ def test_correctness_thresholds():
 def test_needs_pairs():
     with pytest.raises(ValueError):
         policy.paired_interval([1.0], [1.0])
+
+
+PROOF = """## RTX 5090 results
+
+- [x] Tested on RTX 5090
+
+| | decode@128 | decode@4k | prefill@4k |
+|---|---:|---:|---:|
+| before (main) | 283.0 | 269.7 | 280.1 |
+| after (this PR) | 283.1 | 1,269.5 tok/s | |
+"""
+
+
+def test_proof_needs_the_ticked_box_and_a_gain():
+    assert policy.proof(PROOF) == "ok"                                   # decode@128 283.1 > 283.0
+    assert policy.proof(PROOF.replace("[x]", "[X]")) == "ok"
+    assert policy.proof(PROOF.replace("[x]", "[ ]")) == "unticked"
+    assert policy.proof("") == "unticked" and policy.proof(None) == "unticked"
+    assert policy.proof(f"<!-- - [x] Tested on RTX 5090 -->\n{PROOF.replace('[x]', '[ ]')}") == "unticked"
+    flat = PROOF.replace("283.1", "283.0").replace("1,269.5 tok/s", "269.7")
+    assert policy.proof(flat) == "no-gain"
+    assert policy.proof(flat.replace("| after (this PR) | 283.0 | 269.7 | |", "| after (this PR) | | | 290 |")) == "ok"
+    assert policy.proof(PROOF.replace("before (main)", "baseline")) == "no-gain"     # row labels are what is read
+
+
+def test_lanes():
+    assert policy.lane(["runtime/src/kernels.cu", "CMakeLists.txt"]) == "scored"
+    assert policy.lane(["runtime/src/kernels.cu", "README.md"]) == "mixed"
+    assert policy.lane(["README.md", "bench/llama_cpp_baseline.sh"]) == "manual"
+    assert policy.lane([]) == "manual"
+    assert policy.lane(["runtime/src/kernels.cu", "eval/policy.py"]) == "protected"
+    assert policy.lane(["bench/baselines/x.json"]) == "protected"
+    assert policy.lane(["runtime/a.cu"] * policy.MAX_LISTED_FILES) == "manual"
+
+
+def test_merge_order_is_largest_conservative_gain_then_oldest():
+    assert policy.merge_order([(3, 1.04), (5, 1.07), (2, 1.07)]) == [2, 5, 3]
+    axes = {"decode@128": {"low": 1.021}, "prefill@4k": {"low": 1.064}}
+    assert policy.speedup_score(axes) == 1.064
+
+
+def test_the_pr_template_is_what_the_proof_check_reads():
+    template = (Path(__file__).resolve().parents[2] / ".github/PULL_REQUEST_TEMPLATE.md").read_text()
+    assert policy.proof(template) == "unticked"
+    filled = (template.replace("- [ ] Tested on RTX 5090", "- [x] Tested on RTX 5090")
+              .replace("| before (main) | | | |", "| before (main) | 283.0 | 269.7 | 280.1 |")
+              .replace("| after (this PR) | | | |", "| after (this PR) | 283.0 | 269.7 | 290.4 |"))
+    assert policy.proof(filled) == "ok"
+    assert policy.proof(filled.replace("290.4", "280.1")) == "no-gain"

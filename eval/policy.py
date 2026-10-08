@@ -4,6 +4,7 @@ Changing this file changes what pull requests are paid for, so it is maintainer-
 not evaluated) and versioned (POLICY_VERSION goes into every verdict).
 """
 import math
+import re
 
 POLICY_VERSION = 1
 
@@ -36,6 +37,20 @@ INTEGRITY_MAX_MEAN_ABS_LP = 0.05
 
 LABELS = {name: f"eval:{name}" for name in TIERS + ("none", "REJECT", "skipped")}
 
+# Pull-request lanes, by changed files. The harness and its inputs are maintainer-owned; only runtime code is
+# scored, and a scored PR may change nothing else, so what merges automatically is exactly what was measured.
+PROTECTED = ("eval/", "reference/", "docker/manifest.yaml", ".github/", "bench/baselines/")
+SCORED = ("runtime/", "CMakeLists.txt")
+MAX_LISTED_FILES = 3000             # GitHub lists at most this many changed files; larger PRs go to a maintainer
+# Contributor limits (org members and collaborators are exempt).
+MAX_OPEN_PRS = 5                    # the newest open PRs beyond this are closed
+STALE_DAYS = 2                      # a PR waiting on its author this long after the bot's last comment is closed
+
+# The RTX 5090 proof a contributor's runtime PR needs before it is evaluated: the ticked box and a before/after
+# table (CONTRIBUTING.md, .github/PULL_REQUEST_TEMPLATE.md) with at least one column where after > before.
+PROOF_BOX = re.compile(r"^\s*[-*]\s*\[[xX]\]\s*Tested on RTX 5090", re.MULTILINE)
+PROOF_ROWS = ("before (main)", "after (this pr)")
+
 # Two-sided 99 % Student-t critical values by degrees of freedom.
 _T99 = {1: 63.657, 2: 9.925, 3: 5.841, 4: 4.604, 5: 4.032, 6: 3.707, 7: 3.499, 8: 3.355, 9: 3.250, 10: 3.169,
         11: 3.106, 12: 3.055, 13: 3.012, 14: 2.977, 15: 2.947, 16: 2.921, 17: 2.898, 18: 2.878, 19: 2.861,
@@ -67,6 +82,46 @@ def tier_for(gain):
         if gain >= edge:
             return name
     return None
+
+
+def lane(files):
+    """The lane a PR's changed files put it in: "protected", "scored", "mixed" (runtime plus other files) or
+    "manual" (no runtime change, or too many files to list)."""
+    if any(f.startswith(PROTECTED) for f in files):
+        return "protected"
+    scored = sum(f.startswith(SCORED) for f in files)
+    if scored == 0 or len(files) >= MAX_LISTED_FILES:
+        return "manual"
+    return "scored" if scored == len(files) else "mixed"
+
+
+def _number(cell):
+    m = re.search(r"\d+(?:\.\d+)?", cell.replace(",", ""))
+    return float(m.group()) if m else None
+
+
+def proof(body):
+    """RTX 5090 proof in a PR description: "unticked", "no-gain" or "ok"."""
+    text = re.sub(r"<!--.*?-->", "", body or "", flags=re.DOTALL)     # the template's hints are not answers
+    if not PROOF_BOX.search(text):
+        return "unticked"
+    rows = {}
+    for line in text.splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if cells[0].lower() in PROOF_ROWS:
+            rows[cells[0].lower()] = [_number(c) for c in cells[1:]]
+    before, after = rows.get(PROOF_ROWS[0], []), rows.get(PROOF_ROWS[1], [])
+    return "ok" if any(b and a and a > b for b, a in zip(before, after)) else "no-gain"
+
+
+def speedup_score(axes):
+    """A verdict's conservative gain, for ranking a round: the best axis's interval low end."""
+    return max((s["low"] for s in axes.values()), default=1.0)
+
+
+def merge_order(candidates):
+    """candidates: [(pr_number, score)] verified against the same main. Largest gain first, then the older PR."""
+    return [n for n, _ in sorted(candidates, key=lambda c: (-c[1], c[0]))]
 
 
 def correctness_reasons(cand, base):
