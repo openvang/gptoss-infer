@@ -96,6 +96,19 @@ So `compare.py` reports every metric twice:
   - KL mean ~3e-7 over all positions (7.8e-7 over generated ones), p99 5.5e-6, max 1.5e-5.
 
   That is fp32 summation-order noise, the lowest threshold any engine could meet.
+- **Calibration so far.** `scripts/reference_candidate.py` runs the reference as a candidate engine on a GPU:
+  `--device cuda` takes about 19 s for the whole corpus, against about 28 min on 8 CPU cores. Against
+  `golden_v1`:
+
+  | Candidate | Top-1 | Mean KL | p99 KL | Generated top-1 | Generated mean KL |
+  |---|---:|---:|---:|---:|---:|
+  | fp32 on GPU (numerical floor) | 1.000 | 1.0e-7 | 1.8e-6 | 1.000 | 7.8e-7 |
+  | BF16 KV cache | 0.946 | 0.023 | 0.42 | 0.988 | 1.5e-3 |
+  | FP16 KV cache | 0.972 | 0.0095 | 0.17 | 0.996 | 5.2e-4 |
+
+  An engine with a given KV format should land near that format's row. Doing much worse means a bug, not
+  precision. The large prompt-position KLs (up to 5–8) come from the KV rounding alone: gpt-oss's untrained
+  prompt-side predictions are unstable.
 - **Top-k coverage is thin in places.** At its thinnest position, `golden_v1`'s top-64 holds only 42 % of the
   probability mass, at flat prompt-side distributions. The tail bucket keeps KL a lower bound there. A future
   golden should use k = 256, or report coverage-weighted KL.

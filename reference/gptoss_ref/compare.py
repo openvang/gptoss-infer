@@ -51,6 +51,25 @@ def candidate_from_logits(golden_records, logits_list):
     return out
 
 
+@torch.inference_mode()
+def candidate_from_hidden(golden_records, hidden_list, lm_head, chunk=256):
+    """Candidate dump from final hidden states [n, H] and an fp32 LM head [V, H], computed chunk by chunk so
+    the full [n, V] logits never exist at once. Runs on the hidden states' device; results are on the CPU."""
+    out = []
+    for g, h in zip(golden_records, hidden_list):
+        ids, nxt = g["top_ids"].long().to(h.device), g["tokens"].long().to(h.device)
+        n = len(g["tokens"])
+        lp_at, top1, tlp = [], [], []
+        for c0 in range(0, n - 1, chunk):
+            c1 = min(n - 1, c0 + chunk)
+            lp = torch.log_softmax(h[c0:c1] @ lm_head.t(), dim=-1)
+            lp_at.append(lp.gather(1, ids[c0:c1]).cpu())
+            top1.append(lp.argmax(dim=-1).to(torch.int32).cpu())
+            tlp.append(lp.gather(1, nxt[c0 + 1:c1 + 1].unsqueeze(1)).squeeze(1).cpu())
+        out.append({"lp_at_ref": torch.cat(lp_at), "top1": torch.cat(top1), "target_lp": torch.cat(tlp)})
+    return out
+
+
 def _kl_rows(ref_lp, cand_lp):
     p = ref_lp.double().exp()
     q = cand_lp.double().exp()

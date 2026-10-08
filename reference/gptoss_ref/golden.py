@@ -43,6 +43,7 @@ def file_sha256(path):
 def score_hidden(hidden, tokens, lm_head, k=64, chunk=256):
     """Golden record for one sequence from its final hidden states [n, H] and the fp32 LM head [V, H]."""
     n = len(tokens)
+    nxt = tokens.long().to(hidden.device)
     top_ids, top_lp, lse, target = [], [], [], []
     for c0 in range(0, n - 1, chunk):
         c1 = min(n - 1, c0 + chunk)
@@ -50,18 +51,18 @@ def score_hidden(hidden, tokens, lm_head, k=64, chunk=256):
         z = torch.logsumexp(logits, dim=-1)
         lp = logits - z.unsqueeze(1)
         v, i = torch.topk(lp, k, dim=-1, sorted=True)
-        top_ids.append(i.to(torch.int32))
-        top_lp.append(v)
-        lse.append(z)
-        target.append(lp.gather(1, tokens[c0 + 1:c1 + 1].long().unsqueeze(1)).squeeze(1))
-    return {"tokens": tokens.to(torch.int32), "top_ids": torch.cat(top_ids), "top_lp": torch.cat(top_lp),
+        top_ids.append(i.to(torch.int32).cpu())
+        top_lp.append(v.cpu())
+        lse.append(z.cpu())
+        target.append(lp.gather(1, nxt[c0 + 1:c1 + 1].unsqueeze(1)).squeeze(1).cpu())
+    return {"tokens": tokens.to(torch.int32).cpu(), "top_ids": torch.cat(top_ids), "top_lp": torch.cat(top_lp),
             "lse": torch.cat(lse), "target_lp": torch.cat(target)}
 
 
 def score(ref, seqs, k=64, progress=None):
     """Run the reference over `seqs` (1-D LongTensors, each >= 2 tokens) and return one record per sequence."""
     hidden = ref.final_hidden(seqs, progress=progress)
-    lm_head = ref.w.get("lm_head.weight")
+    lm_head = ref.w.get("lm_head.weight").to(ref.device)
     return [score_hidden(h, s, lm_head, k=k) for h, s in zip(hidden, seqs)]
 
 
