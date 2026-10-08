@@ -70,6 +70,8 @@ private:
     float *norm_ = nullptr, *cos_ = nullptr, *sin_ = nullptr;
     float *x_ = nullptr, *h_ = nullptr, *qkv_ = nullptr, *attn_ = nullptr, *part_ = nullptr, *a_ = nullptr;
     float *y_ = nullptr, *gate_w_ = nullptr, *logits_ = nullptr, *score_work_ = nullptr, *score_f_ = nullptr;
+    float* router_logits_ = nullptr;
+    unsigned* router_done_ = nullptr;
     int *ids_ = nullptr, *token_ = nullptr, *pos_d_ = nullptr, *score_ids_ = nullptr, *score_i_ = nullptr;
     int score_cap_ = 1024;
     cudaStream_t stream_ = nullptr;

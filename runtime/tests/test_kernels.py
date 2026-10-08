@@ -127,17 +127,22 @@ def test_attention(pos, window, max_ctx):
 
 
 @cuda
-def test_router():
+@pytest.mark.parametrize("E,k", [(32, 4), (32, 8), (6, 4)])
+def test_router(E, k):
     g = gen(3)
-    W = (torch.randn(32, 2880, device=DEV, generator=g) * 0.05).to(torch.bfloat16)
-    b, x = torch.randn(32, device=DEV, generator=g) * 0.1, torch.randn(2880, device=DEV, generator=g)
-    ids = torch.empty(4, device=DEV, dtype=torch.int32)
-    w = torch.empty(4, device=DEV)
-    ok(LIB.gptoss_kernel_router(p(W), p(b), p(x), 32, 2880, 4, p(ids), p(w)))
-    logits = W.double() @ x.double() + b.double()
-    v, i = torch.topk(logits, 4)
-    assert ids.tolist() == i.tolist()
-    torch.testing.assert_close(w.double(), torch.softmax(v, 0), rtol=1e-5, atol=1e-6)
+    W = (torch.randn(E, 2880, device=DEV, generator=g) * 0.05).to(torch.bfloat16)
+    b, x = torch.randn(E, device=DEV, generator=g) * 0.1, torch.randn(2880, device=DEV, generator=g)
+    b[1] += 10                                   # experts 1 and E-1 tie for first: the lower index wins
+    W[E - 1], b[E - 1] = W[1], b[1]
+    ids = torch.empty(k, device=DEV, dtype=torch.int32)
+    w = torch.empty(k, device=DEV)
+    ok(LIB.gptoss_kernel_router(p(W), p(b), p(x), E, 2880, k, p(ids), p(w)))
+    logits = (W.double() @ x.double() + b.double()).tolist()
+    want = sorted(range(E), key=lambda e: (-logits[e], e))[:k]
+    assert ids.tolist() == want
+    v = torch.tensor([logits[e] for e in want], dtype=torch.float64)
+    torch.testing.assert_close(w.double().cpu(), torch.softmax(v, 0), rtol=1e-5, atol=1e-6)
+    assert LIB.gptoss_kernel_router(p(W), p(b), p(x), E, 2880, E + 1, p(ids), p(w)) != 0   # k > E is rejected
 
 
 @cuda

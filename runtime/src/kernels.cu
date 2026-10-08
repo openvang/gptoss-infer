@@ -269,43 +269,65 @@ __global__ void attn_combine_kernel(const float* part, const float* sinks, const
     out[h * kHeadDim + d] = acc / L;
 }
 
-__global__ void router_kernel(const __nv_bfloat16* __restrict__ W, const float* __restrict__ b,
-                              const float* __restrict__ x, int E, int H, int k, int* ids, float* weights) {
-    extern __shared__ float xs[];
-    __shared__ float logits[32];
-    for (int i = threadIdx.x; i < H; i += blockDim.x) xs[i] = x[i];
-    __syncthreads();
-    const int warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
-    if (warp < E) {
-        const uint4* Wv = reinterpret_cast<const uint4*>(W) + size_t(warp) * (H >> 3);
-        float acc = 0.f;
-        for (int c = lane; c < (H >> 3); c += 32) {
-            const uint4 u = __ldg(Wv + c);
-            const float* xv = xs + c * 8;
-            acc += bf_lo(u.x) * xv[0] + bf_hi(u.x) * xv[1] + bf_lo(u.y) * xv[2] + bf_hi(u.y) * xv[3] +
-                   bf_lo(u.z) * xv[4] + bf_hi(u.z) * xv[5] + bf_lo(u.w) * xv[6] + bf_hi(u.w) * xv[7];
-        }
-        acc = warp_sum(acc);
-        if (lane == 0) logits[warp] = acc + b[warp];
+constexpr int kRouterThreads = 256;
+
+// Block e computes logit e; the last block to finish selects the top k with one warp (the __threadfence() pattern
+// of the CUDA Programming Guide, "Memory Fence Functions"). *done is 0 between launches: the last block resets it.
+__global__ void __launch_bounds__(kRouterThreads) router_kernel(const __nv_bfloat16* __restrict__ W,
+                                                                const float* __restrict__ b,
+                                                                const float* __restrict__ x, int E, int H, int k,
+                                                                float* logits, unsigned* done, int* ids,
+                                                                float* weights) {
+    __shared__ float red[kRouterThreads / 32];
+    __shared__ bool last;
+    const int e = blockIdx.x, H8 = H >> 3, warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
+    const uint4* Wv = reinterpret_cast<const uint4*>(W) + size_t(e) * H8;
+    const float4* x4 = reinterpret_cast<const float4*>(x);
+    float acc = 0.f;
+#pragma unroll 2
+    for (int c = threadIdx.x; c < H8; c += kRouterThreads) {
+        const uint4 u = __ldg(Wv + c);
+        const float4 xa = __ldg(x4 + 2 * c), xb = __ldg(x4 + 2 * c + 1);
+        acc += bf_lo(u.x) * xa.x + bf_hi(u.x) * xa.y + bf_lo(u.y) * xa.z + bf_hi(u.y) * xa.w +
+               bf_lo(u.z) * xb.x + bf_hi(u.z) * xb.y + bf_lo(u.w) * xb.z + bf_hi(u.w) * xb.w;
     }
+    acc = warp_sum(acc);
+    if (lane == 0) red[warp] = acc;
     __syncthreads();
     if (threadIdx.x == 0) {
-        bool used[32] = {};
-        float vals[8];
-        int idx[8];
-        for (int j = 0; j < k; ++j) {
-            int best = -1;
-            for (int e = 0; e < E; ++e)
-                if (!used[e] && (best < 0 || logits[e] > logits[best])) best = e;
-            used[best] = true;
-            idx[j] = best;
-            vals[j] = logits[best];
-        }
-        const float top = vals[0];                       // max of the selected logits (sorted descending)
-        float sum = 0.f;
-        for (int j = 0; j < k; ++j) { vals[j] = expf(vals[j] - top); sum += vals[j]; }
-        for (int j = 0; j < k; ++j) { ids[j] = idx[j]; weights[j] = vals[j] / sum; }
+        float t = 0.f;
+        for (int w = 0; w < kRouterThreads / 32; ++w) t += red[w];
+        logits[e] = t + b[e];
+        __threadfence();
+        last = atomicAdd(done, 1u) == unsigned(E - 1);
     }
+    __syncthreads();
+    if (!last || warp) return;
+
+    // Lane i holds expert i. Ids >= 32 mark lanes that can no longer be selected; NaN never wins, so the order is
+    // total and every lane agrees on each pick. Ties go to the lower index.
+    float v = lane < E ? reinterpret_cast<volatile float*>(logits)[lane] : -INFINITY;
+    if (v != v) v = -INFINITY;
+    int id = lane < E ? lane : 32 + lane;
+    float sel = -INFINITY;
+    int sel_id = 0;
+    for (int j = 0; j < k; ++j) {
+        float best = v;
+        int besti = id;
+        for (int o = 16; o > 0; o >>= 1) {
+            const float ob = __shfl_xor_sync(kFull, best, o);
+            const int oi = __shfl_xor_sync(kFull, besti, o);
+            if (ob > best || (ob == best && oi < besti)) { best = ob; besti = oi; }
+        }
+        if (lane == j) { sel = best; sel_id = besti; }
+        if (id == besti) { v = -INFINITY; id = 32 + lane; }
+    }
+    // Softmax over the k selected logits; lane 0 holds the largest.
+    const float top = __shfl_sync(kFull, sel, 0);
+    const float p = lane < k ? expf(sel - top) : 0.f;
+    const float sum = warp_sum(p);
+    if (lane < k) { ids[lane] = sel_id; weights[lane] = p / sum; }
+    if (lane == 0) *done = 0;
 }
 
 // Activations for the MXFP4 kernels live in shared memory as rows of 32 values padded to 33, so the 32 lanes
@@ -495,10 +517,10 @@ void launch_attention(const float* q, const kv_t* k_cache, const kv_t* v_cache, 
     check_launch("attn_combine");
 }
 
-void launch_router(const __nv_bfloat16* W, const float* b, const float* x, int E, int H, int k, int* ids,
-                   float* weights, cudaStream_t s) {
-    if (E > 32 || k > 8 || H % 8) throw std::runtime_error("router: unsupported shape");
-    router_kernel<<<1, 1024, H * sizeof(float), s>>>(W, b, x, E, H, k, ids, weights);
+void launch_router(const __nv_bfloat16* W, const float* b, const float* x, int E, int H, int k, float* logits,
+                   unsigned* done, int* ids, float* weights, cudaStream_t s) {
+    if (E < 1 || E > 32 || k < 1 || k > 8 || k > E || H % 8) throw std::runtime_error("router: unsupported shape");
+    router_kernel<<<E, kRouterThreads, 0, s>>>(W, b, x, E, H, k, logits, done, ids, weights);
     check_launch("router");
 }
 
