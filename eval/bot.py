@@ -6,7 +6,7 @@ Runs on a trusted host where `gh` is logged in as the maintainer account. The GP
 credentials: the bot ships commits to it as a git bundle over SSH, runs main's eval/run_eval.py there, and reads
 back only the verdict JSON.
 
-    python eval/bot.py --repo openvang/gptoss-infer --box root@HOST --port 30050 --key ~/.ssh/key [--once]
+    python eval/bot.py --repo openvang/gptoss-infer --box root@HOST --port PORT --key ~/.ssh/key [--once]
 
 A PR is evaluated as it would land: merged onto the current main. Draft PRs and PRs labelled `hold` are skipped.
 A tier is merged only if main has not moved since the evaluation (otherwise it is re-evaluated) and only at the
