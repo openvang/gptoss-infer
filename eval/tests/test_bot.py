@@ -96,6 +96,9 @@ class FakeBox:
     def setup(self):
         pass
 
+    def after_round(self):
+        self.rounds = getattr(self, "rounds", 0) + 1
+
     def candidate(self, pr, main):
         return None if self.results.get(pr["head"]) == "conflict" else f"{main}+{pr['head']}"
 

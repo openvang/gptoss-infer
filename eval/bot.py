@@ -6,7 +6,8 @@ Runs on a trusted host where `gh` is logged in as the maintainer account. The GP
 credentials: the bot ships commits to it as a git bundle over SSH, runs main's eval/run_eval.py there, and reads
 back only the verdict JSON.
 
-    python eval/bot.py --repo openvang/gptoss-infer --box root@HOST --port PORT --key ~/.ssh/key [--once]
+    python eval/bot.py --repo openvang/gptoss-infer --vast-env .env --key ~/.ssh/key [--once]       # vast.ai VMs
+    python eval/bot.py --repo openvang/gptoss-infer --box root@HOST --port PORT --key ~/.ssh/key   # fixed box
 
 Each poll is one round against the current main (CONTRIBUTING.md has the contributor-facing rules):
 1. A contributor with more than policy.MAX_OPEN_PRS open PRs has the newest beyond that closed.
@@ -38,8 +39,12 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import policy  # noqa: E402
+import vast  # noqa: E402
 
 BOX_ROOT = "/data/gptoss-eval"
+# What eval/box/provision.sh installs depends on these files; the box is provisioned again when they change.
+PROVISION_INPUTS = ("eval/box/provision.sh", "eval/image/Dockerfile", "reference/weights.lock.json",
+                    "reference/requirements.txt")
 MARKER = "<!-- gptoss-eval head={head} base={base} label={label} score={score:.4f} -->"
 MARKER_RE = re.compile(r"<!-- gptoss-eval head=(\w+) base=(\w+) label=([\w:-]+)(?: score=([\d.]+))? -->")
 MEMBERS = {"OWNER", "MEMBER", "COLLABORATOR"}
@@ -162,16 +167,17 @@ class GitHub:
 
 
 class Box:
-    """The GPU box: builds each candidate locally (the PR merged onto main), ships it, runs main's harness."""
+    """The GPU box. Builds each candidate locally (the PR merged onto main), ships it with main, prepares the box with
+    main's eval/box/provision.sh when what it installs has changed, and runs main's eval/run_eval.py there. The box
+    is a fixed SSH host (--box) or a vast.ai VM rented for the work (--vast-env, eval/vast.py)."""
 
-    def __init__(self, args):
+    def __init__(self, args, vast=None):
         self.a = args
+        self.vast = vast
         self.work = Path(args.workdir).expanduser()
         self.mirror = self.work / "mirror"
-        key = str(Path(args.key).expanduser())
-        opts = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=30"]
-        self.ssh = ["ssh", "-i", key, "-p", str(args.port), *opts, args.box]
-        self.scp = ["scp", "-q", "-i", key, "-P", str(args.port), *opts]
+        self.key = str(Path(args.key).expanduser())
+        self.golden = Path(args.golden).expanduser()
 
     def git(self, *args, cwd=None):
         return run(["git", "-C", str(cwd or self.mirror), *args]).strip()
@@ -183,6 +189,36 @@ class Box:
             # Local merge commits only (never pushed) need an identity.
             self.git("config", "user.name", "gptoss-eval-bot")
             self.git("config", "user.email", "gptoss-eval-bot@localhost")
+
+    # -- SSH to the current box: a rented VM gets its own known_hosts file, trusted on first use ------------------
+
+    def _opts(self, iid):
+        opts = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=30"]
+        if iid is not None:
+            opts += ["-o", f"UserKnownHostsFile={self.work / f'known_hosts-{iid}'}", "-o", "StrictHostKeyChecking=accept-new"]
+        return opts
+
+    def ssh(self, iid, target):
+        return ["ssh", "-i", self.key, "-p", str(target[1]), *self._opts(iid), target[0]]
+
+    def scp(self, iid, target):
+        return ["scp", "-q", "-i", self.key, "-P", str(target[1]), *self._opts(iid)]
+
+    def ssh_ok(self, iid, target):
+        try:
+            return subprocess.run(self.ssh(iid, target) + ["true"], capture_output=True, stdin=subprocess.DEVNULL,
+                                  timeout=90).returncode == 0
+        except subprocess.TimeoutExpired:
+            return False
+
+    def target(self):
+        return self.vast.target() if self.vast else (None, (self.a.box, self.a.port))
+
+    def after_round(self):
+        if self.vast:
+            self.vast.release_if_idle()
+
+    # -- one evaluation ----------------------------------------------------------------------------------------------
 
     def candidate(self, pr, main):
         """Merge the PR head onto main locally; returns the merged commit, or None on conflict."""
@@ -202,26 +238,49 @@ class Box:
             self.git("worktree", "remove", "--force", str(wt))
 
     def evaluate(self, main, cand):
+        iid, target = self.target()
+        try:
+            return self._evaluate(iid, target, main, cand)
+        finally:
+            if self.vast:
+                self.vast.used()
+
+    def _evaluate(self, iid, target, main, cand):
+        host, ssh, scp = target[0], self.ssh(iid, target), self.scp(iid, target)
         self.git("update-ref", "refs/eval/base", main)
         self.git("update-ref", "refs/eval/cand", cand)
+        golden = f"{BOX_ROOT}/goldens/{self.golden.name}"            # a release artifact, checked by run_eval.py
+        if subprocess.run(ssh + [f"mkdir -p {BOX_ROOT}/goldens && test -f {golden}"], capture_output=True,
+                          stdin=subprocess.DEVNULL, timeout=300).returncode:
+            run(scp + [str(self.golden), f"{host}:{golden}"])
         with tempfile.TemporaryDirectory() as d:
             bundle = Path(d) / "eval.bundle"
             self.git("bundle", "create", str(bundle), "refs/eval/base", "refs/eval/cand")
-            run(self.scp + [str(bundle), f"{self.a.box}:{BOX_ROOT}/incoming.bundle"])
+            run(scp + [str(bundle), f"{host}:{BOX_ROOT}/incoming.bundle"])
         q = shlex.quote
-        remote = (f"set -e; cd {BOX_ROOT}; [ -d repo ] || git init -q repo; "
-                  f"git -C repo fetch -q {BOX_ROOT}/incoming.bundle '+refs/eval/*:refs/eval/*'; "
-                  f"rm -rf harness && mkdir harness && git -C repo archive {q(main)} | tar -x -C harness; "
-                  f"{self.a.box_python} harness/eval/run_eval.py --repo repo --base {q(main)} --cand {q(cand)} "
-                  f"--models {self.a.box_models} --goldens {BOX_ROOT}/goldens --work {BOX_ROOT}/runs "
-                  f"--pairs {self.a.pairs}")
-        proc = subprocess.run(self.ssh + [remote], capture_output=True, text=True, stdin=subprocess.DEVNULL,
+        stamp_inputs = " ".join(f"harness/{f}" for f in PROVISION_INPUTS)
+        remote = "\n".join([
+            "set -e",
+            f"cd {BOX_ROOT}",
+            "[ -d repo ] || git init -q repo",
+            f"git -C repo fetch -q {BOX_ROOT}/incoming.bundle '+refs/eval/*:refs/eval/*'",
+            f"rm -rf harness && mkdir harness && git -C repo archive {q(main)} | tar -x -C harness",
+            # Provision once per box, and again whenever main changes what provisioning installs.
+            f"stamp=$(cat {stamp_inputs} | sha256sum | cut -c1-16)",
+            'if [ "$(cat provisioned 2>/dev/null)" != "$stamp" ]; then',
+            "  bash harness/eval/box/provision.sh > provision.log 2>&1 || { tail -n 30 provision.log >&2; exit 3; }",
+            '  echo "$stamp" > provisioned',
+            "fi",
+            f"{self.a.box_python} harness/eval/run_eval.py --repo repo --base {q(main)} --cand {q(cand)} "
+            f"--models {self.a.box_models} --goldens {BOX_ROOT}/goldens --work {BOX_ROOT}/runs --pairs {self.a.pairs}",
+        ])
+        proc = subprocess.run(ssh + [remote], capture_output=True, text=True, stdin=subprocess.DEVNULL,
                               timeout=4 * 3600)
         lines = proc.stdout.strip().splitlines()
         if not lines or not lines[-1].endswith("verdict.json"):
             raise RuntimeError(f"eval failed on the box (exit {proc.returncode}): {proc.stderr[-1500:]}")
         with tempfile.TemporaryDirectory() as d:
-            run(self.scp + [f"{self.a.box}:{lines[-1]}", f"{d}/verdict.json"])
+            run(scp + [f"{host}:{lines[-1]}", f"{d}/verdict.json"])
             return json.loads(Path(d, "verdict.json").read_text())
 
 
@@ -291,6 +350,7 @@ class Bot:
                 ready.append(result)
         self.merge_round(ready, main)
         self.close_stale(waiting, main)
+        self.box.after_round()
 
     @staticmethod
     def isolated(pr, step):
@@ -475,22 +535,33 @@ class Bot:
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--repo", required=True)
-    ap.add_argument("--box", required=True, help="user@host of the GPU box")
-    ap.add_argument("--port", type=int, default=22)
-    ap.add_argument("--key", required=True)
-    ap.add_argument("--box-python", default="/root/work/tvenv/bin/python")
+    where = ap.add_mutually_exclusive_group(required=True)
+    where.add_argument("--box", help="user@host of a fixed GPU box")
+    where.add_argument("--vast-env", help="env file with VAST_API_KEY (or VAST): rent RTX 5090 VMs on vast.ai")
+    ap.add_argument("--port", type=int, default=22, help="SSH port of --box")
+    ap.add_argument("--key", required=True, help="SSH private key for the box")
+    ap.add_argument("--vast-cli", default="vastai", help="the vast.ai CLI (pip install vastai)")
+    ap.add_argument("--vast-max-dph", type=float, default=1.0, help="highest $/hour to rent at")
+    ap.add_argument("--vast-idle-minutes", type=int, default=20, help="destroy the VM after this long without work")
+    ap.add_argument("--box-python", default="/data/venv/bin/python", help="the judge's Python (eval/box/provision.sh)")
     ap.add_argument("--box-models", default="/data/models", help="directory holding gpt-oss-20b on the box")
+    ap.add_argument("--golden", default=str(HERE.parent / "reference/goldens/golden_v1.safetensors"),
+                    help="the golden release artifact, uploaded to a box that lacks it")
     ap.add_argument("--workdir", default="~/.cache/gptoss-eval-bot")
     ap.add_argument("--pairs", type=int, default=5)
     ap.add_argument("--interval", type=int, default=120, help="seconds between rounds")
     ap.add_argument("--once", action="store_true")
     args = ap.parse_args()
-    bot = Bot(GitHub(args.repo), Box(args))
+    box = Box(args)
+    if args.vast_env:
+        box.vast = vast.Vast(args.vast_cli, vast.read_key(Path(args.vast_env).expanduser()), box.ssh_ok,
+                             max_dph=args.vast_max_dph, idle_minutes=args.vast_idle_minutes)
+    bot = Bot(GitHub(args.repo), box)
     bot.setup()
     while True:
         try:
             bot.run_once()
-        except (subprocess.SubprocessError, OSError, ValueError) as e:   # GitHub or SSH hiccup: retry next poll
+        except (subprocess.SubprocessError, OSError, ValueError, RuntimeError) as e:   # GitHub, SSH or vast.ai hiccup
             if args.once:
                 raise
             print(f"poll failed: {e} {getattr(e, 'stderr', '') or ''}"[:800], flush=True)
