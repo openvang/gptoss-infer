@@ -69,7 +69,8 @@ HOLD = ("d93f0b", "maintainer override: the bot does not evaluate, merge or clos
 MANAGED = set(policy.LABELS.values()) | set(WORKFLOW_LABELS) | set(STATUS_LABELS)   # the bot touches no other label
 
 
-def run(cmd, input=None, timeout=None):
+def run(cmd, input=None, timeout=900):
+    """Run a command to completion. Every call is time-limited, so a hung gh, git or scp can't stall the bot."""
     return subprocess.run(cmd, check=True, capture_output=True, text=True, input=input, timeout=timeout).stdout
 
 
@@ -294,7 +295,7 @@ class Box:
             # Provision once per box, and again whenever main changes what provisioning installs.
             f"stamp=$(cat {stamp_inputs} | sha256sum | cut -c1-16)",
             'if [ "$(cat provisioned 2>/dev/null)" != "$stamp" ]; then',
-            "  bash harness/eval/box/provision.sh > provision.log 2>&1 || { tail -n 30 provision.log >&2; exit 3; }",
+            "  timeout 3600 bash harness/eval/box/provision.sh > provision.log 2>&1 || { tail -n 30 provision.log >&2; exit 3; }",
             '  echo "$stamp" > provisioned',
             "fi",
         ] + ([f"{self.a.box_python} harness/eval/run_eval.py --repo repo --base {q(main)} --cand {q(cand)} "
@@ -396,7 +397,7 @@ class Bot:
         """One PR's GitHub failure must not stop the round for the others."""
         try:
             return step()
-        except subprocess.CalledProcessError as e:
+        except subprocess.SubprocessError as e:
             print(f"  #{pr['number']}: {e} {(e.stderr or '').strip()[:300]}", flush=True)
             return None
 
@@ -544,7 +545,7 @@ class Bot:
             self.sync_labels(r.pr, {policy.LABELS[r.tier], "merge-first"})
             try:
                 self.gh.merge(n, r.pr["head"])
-            except subprocess.CalledProcessError as e:
+            except subprocess.SubprocessError as e:
                 print(f"  #{n}: merge refused: {(e.stderr or '').strip()[:300]}", flush=True)
                 self.sync_labels(r.pr, {policy.LABELS[r.tier]})
                 continue

@@ -322,3 +322,16 @@ def test_code_changed_sees_only_eval_changes_on_main(tmp_path):
     (origin / "eval" / "bot.py").write_text("v2\n")
     git(origin, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "bot")
     assert bot.code_changed(app)
+
+
+def test_a_hung_github_call_on_one_pr_does_not_stop_the_round():
+    b, gh, _, _ = make([pr(1), pr(2)], {"h1": ("S", 1.04), "h2": ("M", 1.07)})
+    files = gh.files
+
+    def hang_on_2(n):
+        if n == 2:
+            raise subprocess.TimeoutExpired(["gh", "api"], 900)
+        return files(n)
+    gh.files = hang_on_2
+    b.run_once()
+    assert gh.merged == [1] and gh.prs[2]["state"] == "open"
