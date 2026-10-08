@@ -224,7 +224,12 @@ def main():
     bot = Bot(args)
     bot.setup()
     while True:
-        bot.run_once()
+        try:
+            bot.run_once()
+        except (subprocess.SubprocessError, OSError, ValueError) as e:   # GitHub or SSH hiccup: retry next poll
+            if args.once:
+                raise
+            print(f"poll failed: {e} {getattr(e, 'stderr', '') or ''}"[:800], flush=True)
         if args.once:
             break
         time.sleep(args.interval)
