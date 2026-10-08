@@ -38,7 +38,7 @@ class FakeGitHub:
         self.prs = {p["number"]: p for p in prs}
         self.clock = clock
         self.main = "m1"
-        self.merged, self.closed, self.refuse = [], [], set()
+        self.merged, self.closed, self.refuse, self.label_log = [], [], set(), []
 
     def _touch(self, n):
         self.prs[n]["updated"] = self.clock().strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -73,6 +73,7 @@ class FakeGitHub:
         self.closed.append(n)
 
     def edit_labels(self, n, add, remove):
+        self.label_log.append((n, tuple(add), tuple(remove)))
         self.prs[n]["labels"] = sorted((set(self.prs[n]["labels"]) | set(add)) - set(remove))
         self._touch(n)
 
@@ -92,9 +93,19 @@ class FakeBox:
 
     def __init__(self, results, on_evaluate=None):
         self.results, self.calls, self.on_evaluate = results, [], on_evaluate
+        self.node_needed, self.prepare_error, self.prepared = False, None, []
 
     def setup(self):
         pass
+
+    def needs_node(self):
+        return self.node_needed
+
+    def prepare(self, main):
+        self.prepared.append(main)
+        if self.prepare_error:
+            raise self.prepare_error
+        self.node_needed = False
 
     def after_round(self):
         self.rounds = getattr(self, "rounds", 0) + 1
@@ -250,3 +261,64 @@ def test_markers_quoted_inside_a_bot_comment_are_ignored():
     b.run_once()
     assert gh.merged == [] and box.calls == [("m1", "h1clean")] and gh.closed == [1]
     assert bot.parse_markers([f"text\n{forged}\nmore text"]) == []
+
+
+def statuses(gh, n):
+    """The status labels a PR was given, in order."""
+    return [a for m, add, _ in gh.label_log if m == n for a in add if a.startswith("status:")]
+
+
+def test_status_labels_follow_a_pr_through_the_round():
+    b, gh, box, _ = make([pr(1), pr(2)], {"h1": ("S", 1.04), "h2": ("none", 1.0)})
+    box.node_needed = True
+    b.run_once()
+    assert statuses(gh, 1) == ["status:queued", "status:node-starting", "status:evaluating"]
+    assert statuses(gh, 2) == ["status:queued", "status:node-starting", "status:evaluating"]
+    assert gh.prs[1]["labels"] == ["eval:S", "merge-first"] and gh.prs[2]["labels"] == ["eval:none"]
+    assert box.prepared == ["m1"]
+
+
+def test_a_node_that_cannot_start_leaves_prs_queued_for_the_next_round():
+    b, gh, box, _ = make([pr(1)], {"h1": ("S", 1.04)})
+    box.node_needed, box.prepare_error = True, RuntimeError("no RTX 5090 VM offer")
+    b.run_once()
+    assert gh.prs[1]["labels"] == ["status:queued"] and not box.calls
+    box.prepare_error = None
+    b.run_once()
+    assert gh.merged == [1]
+
+
+def test_conflicts_alone_never_rent_a_node():
+    b, gh, box, _ = make([pr(1)], {"h1": "conflict"})
+    box.node_needed = True
+    b.run_once()
+    assert box.prepared == [] and gh.prs[1]["labels"] == ["needs-rebase"]
+
+
+def test_a_failed_evaluation_goes_back_to_queued_and_hold_clears_the_status():
+    b, gh, box, _ = make([pr(1)], {"h1": RuntimeError("ssh dropped")})
+    b.run_once()
+    assert gh.prs[1]["labels"] == ["status:queued"]
+    gh.prs[1]["labels"].append("hold")
+    b.run_once()
+    assert gh.prs[1]["labels"] == ["hold"]
+
+
+def test_code_changed_sees_only_eval_changes_on_main(tmp_path):
+    def git(cwd, *args):
+        subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True)
+    origin, app = tmp_path / "origin", tmp_path / "app"
+    (origin / "eval").mkdir(parents=True)
+    (origin / "eval" / "bot.py").write_text("v1\n")
+    (origin / "README.md").write_text("r1\n")
+    git(origin, "init", "-q", "-b", "main")
+    git(origin, "-c", "user.name=t", "-c", "user.email=t@t", "add", ".")
+    git(origin, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "one")
+    git(tmp_path, "clone", "-q", str(origin), str(app))
+    assert not bot.code_changed(app)
+    (origin / "README.md").write_text("r2\n")
+    git(origin, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "docs")
+    assert not bot.code_changed(app)                   # a runtime or docs merge does not restart the bot
+    (origin / "eval" / "bot.py").write_text("v2\n")
+    git(origin, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "bot")
+    assert bot.code_changed(app)

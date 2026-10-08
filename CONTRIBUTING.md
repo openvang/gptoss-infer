@@ -88,6 +88,9 @@ Each round, the bot merges every waiting PR onto the same `main` and evaluates t
 The round's largest gain is the highest low end of a 99 % interval on any axis. If `main` moves during a round,
 nothing merges and every verified PR is measured again on the new `main`.
 
+While your PR waits on the bot, one label shows where it is: `status:queued`, `status:node-starting` (an RTX
+5090 node is being rented and set up) or `status:evaluating`. The verdict replaces it.
+
 Limits:
 - **Open PRs:** at most 5 per contributor; the newest beyond that are closed.
 - **Inactivity:** a PR waiting on you (`needs-benchmark`, `needs-rebase` or a split request) is closed 2 days

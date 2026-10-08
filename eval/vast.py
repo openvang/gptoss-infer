@@ -42,7 +42,7 @@ def ssh_target(inst):
 
 
 class Vast:
-    def __init__(self, cli, api_key, ssh_ok, max_dph=1.0, idle_minutes=20, disk_gb=120, min_credit=2.0,
+    def __init__(self, cli, api_key, ssh_ok, max_dph=1.0, idle_minutes=7, disk_gb=120, min_credit=2.0,
                  boot_timeout=1800, clock=time.time, sleep=time.sleep):
         self.cli, self.key, self.ssh_ok = cli, api_key, ssh_ok
         self.max_dph, self.idle, self.disk, self.min_credit = max_dph, idle_minutes * 60, disk_gb, min_credit
@@ -61,6 +61,9 @@ class Vast:
     def destroy(self, iid):
         print(f"vast: destroying instance {iid}", flush=True)
         self.call("destroy", "instance", str(iid), "-y")
+
+    def running(self):
+        return any(i.get("actual_status") == "running" for i in self.instances())
 
     def target(self):
         """(instance id, ssh target) of a running VM: the one already rented (waiting while it boots), else a new

@@ -35,7 +35,7 @@ script, the eval image, the weights lock or the pinned requirements have changed
 artifact if the box lacks it. All box work is plain shell over SSH (`ssh`, `scp`, `git`, `docker`).
 
 **vast.ai.** With `--vast-env`, the bot rents an RTX 5090 VM when a round has PRs to evaluate, reuses it while work
-keeps coming, and destroys it after `--vast-idle-minutes` (20) without work. It must be a VM: vast.ai's container
+keeps coming, and destroys it after `--vast-idle-minutes` (7) without work. It must be a VM: vast.ai's container
 instances can't run Docker.
 - **Offers:** one RTX 5090 on a verified host with reliability ≥ 0.98, download ≥ 300 Mb/s, disk ≥ 150 GB,
   RAM ≥ 32 GB and ≥ 8 CPU cores. The bot takes the best DL-perf per dollar at or under `--vast-max-dph`
@@ -49,13 +49,50 @@ instances can't run Docker.
 **A fixed box.** `--box user@host --port N` uses an existing machine with the same software. Docker volumes must
 live outside an encrypted `/root` (as on Lium); the bot uses `/data`.
 
-## Running
+## PR status labels
+
+While a PR waits on the bot, one status label shows where it is. The verdict replaces it.
+
+| Label | Meaning |
+|---|---|
+| `status:queued` | waiting for the next round (also after a failed attempt, which is retried) |
+| `status:node-starting` | an RTX 5090 node is being rented and set up for this round |
+| `status:evaluating` | being built and measured now |
+
+## Running as a service
+
+The bot runs as a systemd user service, independent of any login session (`loginctl enable-linger`). It runs from
+its own clone of `main` and pulls it on every start. With `--restart-on-update`, it exits after any round where
+`main` has changed `eval/`, so systemd restarts it on the new code.
+
+```ini
+# ~/.config/systemd/user/gptoss-eval-bot.service
+[Unit]
+Description=gptoss-infer PR eval bot
+
+[Service]
+Environment=APP=%h/.local/share/gptoss-eval-bot/app
+ExecStartPre=-/usr/bin/git -C ${APP} pull --ff-only -q
+ExecStart=/usr/bin/python3 -u ${APP}/eval/bot.py --repo openvang/gptoss-infer --restart-on-update \
+    --vast-env <env file with VAST_API_KEY> --vast-cli <vastai> --key <ssh key> \
+    --golden %h/.local/share/gptoss-eval-bot/golden_v1.safetensors
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=default.target
+```
 
 ```bash
-# the bot, on the trusted host (gh logged in as the maintainer; pip install vastai)
-python eval/bot.py --repo openvang/gptoss-infer --vast-env /path/to/.env --key ~/.ssh/<key> --vast-cli <vastai>
+git clone -q https://github.com/openvang/gptoss-infer ~/.local/share/gptoss-eval-bot/app
+cp reference/goldens/golden_v1.safetensors ~/.local/share/gptoss-eval-bot/     # release artifact
+systemctl --user daemon-reload && systemctl --user enable --now gptoss-eval-bot
+journalctl --user -u gptoss-eval-bot -f                                          # the bot's log
+```
 
-# one evaluation by hand, on a provisioned box
+`gh` must be logged in as the maintainer account. One evaluation by hand, on a provisioned box:
+
+```bash
 /data/venv/bin/python eval/run_eval.py --repo /data/gptoss-eval/repo --base <sha> --cand <sha> \
     --models /data/models --goldens /data/gptoss-eval/goldens --work /data/gptoss-eval/runs
 ```

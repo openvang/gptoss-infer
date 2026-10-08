@@ -21,8 +21,9 @@ Each poll is one round against the current main (CONTRIBUTING.md has the contrib
    merge gets `merge-first` and is squash-merged at its evaluated head; the others get `re-evaluate` and are
    measured again on the new main, so each is paid only for what it adds.
 5. A contributor's PR that has waited on its author for policy.STALE_DAYS since the bot's last comment is closed.
-Drafts and PRs labelled `hold` are not evaluated or merged; `hold` PRs are never closed. Org members and
-collaborators skip the proof check, the open-PR limit and every close.
+While a PR waits on the bot, a status label shows where it is: `status:queued`, `status:node-starting` (a node is
+being rented and set up) or `status:evaluating`. Drafts and PRs labelled `hold` are not evaluated or merged; `hold`
+PRs are never closed. Org members and collaborators skip the proof check, the open-PR limit and every close.
 """
 import argparse
 import datetime as dt
@@ -58,8 +59,14 @@ WORKFLOW_LABELS = {
     "needs-rebase": ("fbca04", "does not merge cleanly onto main: rebase and push"),
     "needs-benchmark": ("fbca04", "RTX 5090 box ticked but no before/after gain in the description: not evaluated"),
 }
+# Where a PR waiting on the bot is, live. Not eval:* (SN74 pays on those).
+STATUS_LABELS = {
+    "status:queued": ("c5def5", "waiting for the bot's next round on the GPU"),
+    "status:node-starting": ("d4c5f9", "an RTX 5090 node is being rented and set up for this round"),
+    "status:evaluating": ("1d76db", "being built and measured on the RTX 5090 now"),
+}
 HOLD = ("d93f0b", "maintainer override: the bot does not evaluate, merge or close this PR")
-MANAGED = set(policy.LABELS.values()) | set(WORKFLOW_LABELS)    # the bot never touches any other label
+MANAGED = set(policy.LABELS.values()) | set(WORKFLOW_LABELS) | set(STATUS_LABELS)   # the bot touches no other label
 
 
 def run(cmd, input=None, timeout=None):
@@ -178,6 +185,7 @@ class Box:
         self.mirror = self.work / "mirror"
         self.key = str(Path(args.key).expanduser())
         self.golden = Path(args.golden).expanduser()
+        self.node = None
 
     def git(self, *args, cwd=None):
         return run(["git", "-C", str(cwd or self.mirror), *args]).strip()
@@ -214,7 +222,21 @@ class Box:
     def target(self):
         return self.vast.target() if self.vast else (None, (self.a.box, self.a.port))
 
+    def needs_node(self):
+        """True when this round has to rent a node before it can evaluate."""
+        return self.vast is not None and not self.vast.running()
+
+    def prepare(self, main):
+        """Get the round's node (renting one if needed) and provision it with main's harness."""
+        self.node = self.target()
+        try:
+            self._remote(*self.node, main, None)
+        finally:
+            if self.vast:
+                self.vast.used()
+
     def after_round(self):
+        self.node = None
         if self.vast:
             self.vast.release_if_idle()
 
@@ -238,24 +260,27 @@ class Box:
             self.git("worktree", "remove", "--force", str(wt))
 
     def evaluate(self, main, cand):
-        iid, target = self.target()
         try:
-            return self._evaluate(iid, target, main, cand)
+            return self._remote(*(self.node or self.target()), main, cand)
         finally:
             if self.vast:
                 self.vast.used()
 
-    def _evaluate(self, iid, target, main, cand):
+    def _remote(self, iid, target, main, cand):
+        """Ship main (and the candidate), provision the box if main's provisioning inputs changed, then evaluate the
+        candidate. Without a candidate, only provisions."""
         host, ssh, scp = target[0], self.ssh(iid, target), self.scp(iid, target)
+        refs = ["refs/eval/base"] + (["refs/eval/cand"] if cand else [])
         self.git("update-ref", "refs/eval/base", main)
-        self.git("update-ref", "refs/eval/cand", cand)
+        if cand:
+            self.git("update-ref", "refs/eval/cand", cand)
         golden = f"{BOX_ROOT}/goldens/{self.golden.name}"            # a release artifact, checked by run_eval.py
         if subprocess.run(ssh + [f"mkdir -p {BOX_ROOT}/goldens && test -f {golden}"], capture_output=True,
                           stdin=subprocess.DEVNULL, timeout=300).returncode:
             run(scp + [str(self.golden), f"{host}:{golden}"])
         with tempfile.TemporaryDirectory() as d:
             bundle = Path(d) / "eval.bundle"
-            self.git("bundle", "create", str(bundle), "refs/eval/base", "refs/eval/cand")
+            self.git("bundle", "create", str(bundle), *refs)
             run(scp + [str(bundle), f"{host}:{BOX_ROOT}/incoming.bundle"])
         q = shlex.quote
         stamp_inputs = " ".join(f"harness/{f}" for f in PROVISION_INPUTS)
@@ -271,11 +296,15 @@ class Box:
             "  bash harness/eval/box/provision.sh > provision.log 2>&1 || { tail -n 30 provision.log >&2; exit 3; }",
             '  echo "$stamp" > provisioned',
             "fi",
-            f"{self.a.box_python} harness/eval/run_eval.py --repo repo --base {q(main)} --cand {q(cand)} "
-            f"--models {self.a.box_models} --goldens {BOX_ROOT}/goldens --work {BOX_ROOT}/runs --pairs {self.a.pairs}",
-        ])
+        ] + ([f"{self.a.box_python} harness/eval/run_eval.py --repo repo --base {q(main)} --cand {q(cand)} "
+              f"--models {self.a.box_models} --goldens {BOX_ROOT}/goldens --work {BOX_ROOT}/runs --pairs {self.a.pairs}"]
+             if cand else []))
         proc = subprocess.run(ssh + [remote], capture_output=True, text=True, stdin=subprocess.DEVNULL,
                               timeout=4 * 3600)
+        if not cand:
+            if proc.returncode:
+                raise RuntimeError(f"provisioning failed on the box (exit {proc.returncode}): {proc.stderr[-1500:]}")
+            return None
         lines = proc.stdout.strip().splitlines()
         if not lines or not lines[-1].endswith("verdict.json"):
             raise RuntimeError(f"eval failed on the box (exit {proc.returncode}): {proc.stderr[-1500:]}")
@@ -297,6 +326,7 @@ class Bot:
         self.box.setup()
         wanted = {name: (COLORS[key], f"gptoss eval verdict: {key}") for key, name in policy.LABELS.items()}
         wanted.update(WORKFLOW_LABELS)
+        wanted.update(STATUS_LABELS)
         wanted["hold"] = HOLD
         self.gh.ensure_labels(wanted)
 
@@ -309,6 +339,11 @@ class Bot:
             self.gh.edit_labels(pr["number"], add, remove)
             pr["labels"] = sorted((set(pr["labels"]) - set(remove)) | set(add))
             pr["touched"] = True
+
+    def set_status(self, pr, status):
+        """Replace the PR's status label (None clears it), keeping its other managed labels."""
+        keep = (set(pr["labels"]) & MANAGED) - set(STATUS_LABELS)
+        self.sync_labels(pr, keep | ({status} if status else set()))
 
     def post(self, pr, text, state, main, score=0.0):
         self.gh.comment(pr["number"], f"{text}\n{marker(pr['head'], main, state, score)}")
@@ -335,6 +370,7 @@ class Bot:
         queue, ready, waiting = [], [], []
         for pr in prs:
             if pr["draft"] or "hold" in pr["labels"]:
+                self.isolated(pr, lambda: self.set_status(pr, None))      # no longer waiting on the bot
                 continue
             state = self.isolated(pr, lambda: self.triage(
                 pr, main, [m for m in self.gh.markers(pr["number"], self.login) if m.head == pr["head"]]))
@@ -344,10 +380,12 @@ class Bot:
                 waiting.append(pr)
             elif isinstance(state, Ready):
                 ready.append(state)
-        for pr in queue:
-            result = self.isolated(pr, lambda: self.evaluate(pr, main))
-            if result:
-                ready.append(result)
+        merged = [(pr, cand) for pr in queue if (cand := self.isolated(pr, lambda: self.candidate(pr, main)))]
+        if merged and self.prepare(merged, main):
+            for pr, cand in merged:
+                result = self.isolated(pr, lambda: self.evaluate(pr, main, cand))
+                if result:
+                    ready.append(result)
         self.merge_round(ready, main)
         self.close_stale(waiting, main)
         self.box.after_round()
@@ -422,38 +460,61 @@ class Bot:
                                                "every round.", {"needs-benchmark"})
         settled = [m for m in marks if m.label in SETTLED]
         if not settled:
-            self.sync_labels(pr, set())                                  # labels from an older head no longer apply
+            self.sync_labels(pr, {"status:queued"})                      # labels from an older head no longer apply
             return "evaluate"
         v = settled[-1]
         if v.label == "conflict":
             self.sync_labels(pr, {"needs-rebase"})
             return "author"
         if v.label in policy.TIERS:
-            return Ready(pr, v.label, v.score) if v.base == main else "evaluate"
+            if v.base == main:
+                return Ready(pr, v.label, v.score)
+            self.set_status(pr, "status:queued")
+            return "evaluate"
         if v.label in ("none", "REJECT"):                                # reopened without a new commit
             self.close(pr, f"Closed: this commit already has its verdict (`{policy.LABELS[v.label]}`). Push a new "
                            f"commit and reopen to be evaluated again.", "closed", main)
         return None
 
-    def evaluate(self, pr, main):
-        n, head = pr["number"], pr["head"]
-        print(f"evaluating #{n} {head[:8]} onto main {main[:8]}", flush=True)
+    def candidate(self, pr, main):
+        """The PR merged onto main (locally), or None after asking for a rebase."""
         cand = self.box.candidate(pr, main)
         if cand is None:
             self.sync_labels(pr, {"needs-rebase"})
             self.post(pr, f"**gptoss eval: `needs-rebase`**\n\nThis PR does not merge cleanly onto main "
                           f"(`{main[:8]}`). Rebase and push; the new head is evaluated in the next round.",
                       "conflict", main)
-            print(f"  #{n}: conflict", flush=True)
-            return None
+            print(f"  #{pr['number']}: conflict", flush=True)
+        return cand
+
+    def prepare(self, merged, main):
+        """A ready box for this round's evaluations; the waiting PRs show it while a node is rented and set up."""
+        if self.box.needs_node():
+            for pr, _ in merged:
+                self.isolated(pr, lambda: self.set_status(pr, "status:node-starting"))
+        try:
+            self.box.prepare(main)
+            return True
+        except Exception as e:                                           # no offer, no credit, setup failed: retry
+            print(f"box not ready: {e}", flush=True)
+            for pr, _ in merged:
+                self.isolated(pr, lambda: self.set_status(pr, "status:queued"))
+            return False
+
+    def evaluate(self, pr, main, cand):
+        n, head = pr["number"], pr["head"]
+        print(f"evaluating #{n} {head[:8]} onto main {main[:8]}", flush=True)
+        self.set_status(pr, "status:evaluating")
         try:
             verdict = self.box.evaluate(main, cand)
         except Exception as e:                                           # infrastructure problem: retry next round
             print(f"  #{n}: {e}", flush=True)
+            self.set_status(pr, "status:queued")
             return None
         label = verdict["label"]
         if label == "error":
             print(f"  #{n}: infra error {verdict.get('reasons')}", flush=True)
+            self.set_status(pr, "status:queued")
             return None
         score = policy.speedup_score(verdict["axes"]) if label in policy.TIERS else 0.0
         self.post(pr, self.verdict_text(verdict, main), label, main, score)
@@ -532,6 +593,16 @@ class Bot:
         return "\n".join(lines)
 
 
+def code_changed(checkout):
+    """True when origin/main's eval/ differs from the checkout the bot is running from."""
+    try:
+        run(["git", "-C", str(checkout), "fetch", "-q", "origin", "main"], timeout=120)
+    except (subprocess.SubprocessError, OSError):
+        return False
+    return subprocess.run(["git", "-C", str(checkout), "diff", "--quiet", "HEAD", "FETCH_HEAD", "--", "eval/"],
+                          capture_output=True).returncode == 1
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--repo", required=True)
@@ -542,7 +613,7 @@ def main():
     ap.add_argument("--key", required=True, help="SSH private key for the box")
     ap.add_argument("--vast-cli", default="vastai", help="the vast.ai CLI (pip install vastai)")
     ap.add_argument("--vast-max-dph", type=float, default=1.0, help="highest $/hour to rent at")
-    ap.add_argument("--vast-idle-minutes", type=int, default=20, help="destroy the VM after this long without work")
+    ap.add_argument("--vast-idle-minutes", type=int, default=7, help="destroy the VM after this long without work")
     ap.add_argument("--box-python", default="/data/venv/bin/python", help="the judge's Python (eval/box/provision.sh)")
     ap.add_argument("--box-models", default="/data/models", help="directory holding gpt-oss-20b on the box")
     ap.add_argument("--golden", default=str(HERE.parent / "reference/goldens/golden_v1.safetensors"),
@@ -551,6 +622,8 @@ def main():
     ap.add_argument("--pairs", type=int, default=5)
     ap.add_argument("--interval", type=int, default=120, help="seconds between rounds")
     ap.add_argument("--once", action="store_true")
+    ap.add_argument("--restart-on-update", action="store_true",
+                    help="exit (for the service manager to restart it on the new code) once main changes eval/")
     args = ap.parse_args()
     box = Box(args)
     if args.vast_env:
@@ -566,6 +639,9 @@ def main():
                 raise
             print(f"poll failed: {e} {getattr(e, 'stderr', '') or ''}"[:800], flush=True)
         if args.once:
+            break
+        if args.restart_on_update and code_changed(HERE.parent):
+            print("eval/ changed on main: exiting so the service restarts on the new code", flush=True)
             break
         time.sleep(args.interval)
 
