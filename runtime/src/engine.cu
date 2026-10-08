@@ -73,6 +73,9 @@ Config Config::load(const std::string& dir) {
 }
 
 void* Engine::raw_alloc(size_t bytes) {
+    if (budget_ && bytes_ + bytes > budget_)
+        throw std::runtime_error("VRAM budget exceeded: need more than " + std::to_string((bytes_ + bytes) >> 20) +
+                                 " MiB, budget " + std::to_string(budget_ >> 20) + " MiB");
     void* p = nullptr;
     CUDA_CHECK(cudaMalloc(&p, bytes));
     allocs_.push_back(p);
@@ -80,7 +83,7 @@ void* Engine::raw_alloc(size_t bytes) {
     return p;
 }
 
-Engine::Engine(const std::string& dir, int max_ctx) : cfg_(Config::load(dir)) {
+Engine::Engine(const std::string& dir, int max_ctx, size_t vram_budget) : cfg_(Config::load(dir)), budget_(vram_budget) {
     if (max_ctx <= 0 || max_ctx > cfg_.max_positions)
         throw std::runtime_error("max_ctx must be in 1.." + std::to_string(cfg_.max_positions));
     max_ctx_ = max_ctx;
@@ -285,6 +288,19 @@ void Engine::step(int token) {
         forward(stream_);
     }
     ++pos_;
+}
+
+void Engine::prefill(const int* tokens, int n, const int* ids, int k, float* lp, int* argmax, float* target_lp) {
+    if (n <= 0) throw std::runtime_error("prefill: n must be positive");
+    if (pos_ + n > max_ctx_) throw std::runtime_error("context is full");
+    // Reference implementation: n single-token steps. A batched prefill replaces this loop and must give the
+    // same distributions (gated by the evaluator on both paths).
+    for (int p = 0; p < n; ++p) {
+        step(tokens[p]);
+        if (ids && p + 1 < n)
+            score(ids + size_t(p) * k, k, tokens[p + 1], lp + size_t(p) * k, argmax + p, target_lp + p, nullptr);
+    }
+    CUDA_CHECK(cudaStreamSynchronize(stream_));
 }
 
 void Engine::bench_steps(int token, int n) {

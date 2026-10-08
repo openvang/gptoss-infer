@@ -33,7 +33,7 @@ struct Layer {
 
 class Engine {
 public:
-    Engine(const std::string& model_dir, int max_ctx);
+    Engine(const std::string& model_dir, int max_ctx, size_t vram_budget = 0);   // 0: no budget
     ~Engine();
     Engine(const Engine&) = delete;
     Engine& operator=(const Engine&) = delete;
@@ -47,6 +47,8 @@ public:
     void set_position(int pos);           // benchmarking only: treat `pos` tokens as cached (contents unspecified)
     void use_graph(bool on);              // replay one captured CUDA graph per step
     void step(int token);                 // appends `token`; logits for the next position are then available
+    // Appends tokens[0..n); optionally scores positions 0..n-2 (see gptoss_prefill). Synchronizes.
+    void prefill(const int* tokens, int n, const int* ids, int k, float* lp, int* argmax, float* target_lp);
     void bench_steps(int token, int n);   // benchmarking: n steps feeding the same token, no host round trips
     void copy_logits(float* host);        // synchronizes
     // lp[i] = log p(ids[i]); argmax of the logits; log p(target) (target < 0: skipped); logsumexp. Synchronizes.
@@ -61,7 +63,7 @@ private:
 
     Config cfg_;
     int max_ctx_ = 0, pos_ = 0;
-    size_t bytes_ = 0;
+    size_t bytes_ = 0, budget_ = 0;
     std::vector<void*> allocs_;
     std::vector<Layer> layers_;
     __nv_bfloat16 *embed_ = nullptr, *lm_head_ = nullptr;

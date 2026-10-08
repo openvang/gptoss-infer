@@ -11,8 +11,10 @@ extern "C" {
 
 typedef struct gptoss_engine gptoss_engine;
 
-/* Loads the checkpoint in model_dir onto the current CUDA device; returns NULL on failure. */
-gptoss_engine* gptoss_create(const char* model_dir, int max_ctx);
+/* Loads the checkpoint in model_dir onto the current CUDA device; returns NULL on failure.
+ * vram_budget_bytes > 0 caps the engine's own device allocations (weights, KV cache, workspaces): creation fails
+ * if they would not fit. The evaluator separately enforces the whole process's measured peak. */
+gptoss_engine* gptoss_create(const char* model_dir, int max_ctx, long long vram_budget_bytes);
 void gptoss_destroy(gptoss_engine* e);
 const char* gptoss_last_error(void);
 
@@ -25,6 +27,12 @@ int gptoss_use_graph(gptoss_engine* e, int on);
 /* Appends one token; afterwards the logits predict the token at the next position. */
 int gptoss_step(gptoss_engine* e, int token);
 int gptoss_logits(gptoss_engine* e, float* out);    /* copies vocab floats */
+/* Appends tokens[0..n) and returns when they are processed. If ids != NULL, also scores every position p < n-1
+ * against tokens[p+1]: lp[p*k + i] = log p(ids[p*k + i]), argmax[p], target_lp[p]. Afterwards the logits predict
+ * the token after tokens[n-1]. This is the entry point for batched prefill: any implementation must produce the
+ * same distributions as n single steps (the evaluator gates both paths against the golden). */
+int gptoss_prefill(gptoss_engine* e, const int32_t* tokens, int n, const int32_t* ids, int k, float* lp,
+                   int32_t* argmax, float* target_lp);
 /* Log-probabilities of ids[0..k), the argmax token, log p(target) (target < 0: not computed) and logsumexp. */
 int gptoss_score(gptoss_engine* e, const int32_t* ids, int k, int target, float* lp, int32_t* argmax,
                  float* target_lp, float* lse);

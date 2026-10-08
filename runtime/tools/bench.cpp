@@ -41,7 +41,7 @@ int main(int argc, char** argv) {
         else { std::fprintf(stderr, "unknown argument %s\n", a.c_str()); return 2; }
     }
     const int max_ctx = *std::max_element(depths.begin(), depths.end()) + tokens;
-    gptoss_engine* e = gptoss_create(argv[1], max_ctx);
+    gptoss_engine* e = gptoss_create(argv[1], max_ctx, 0);
     if (!e) die("create");
     if (gptoss_use_graph(e, graph ? 1 : 0)) die("use_graph");
     std::printf("{\"device_bytes\": %lld, \"graph\": %s, \"tokens\": %d, \"reps\": %d, \"results\": [\n",
