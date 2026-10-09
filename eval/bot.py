@@ -325,14 +325,16 @@ class Box:
 
 
 class Bot:
-    def __init__(self, github, box, now=None):
+    def __init__(self, github, box, now=None, unlock=None):
         self.gh = github
         self.box = box
+        self.unlock = unlock or (lambda: None)                         # makes gh's keyring readable
         self.now = now or (lambda: dt.datetime.now(dt.timezone.utc))
         self.login = None
         self.guide = f"https://github.com/{github.repo}/blob/main/CONTRIBUTING.md"
 
     def setup(self):
+        self.unlock()
         self.gh.ensure_account()
         self.login = self.gh.login()
         self.box.setup()
@@ -377,6 +379,7 @@ class Bot:
     # -- one round ------------------------------------------------------------------------------------------------
 
     def run_once(self):
+        self.unlock()
         self.gh.ensure_account()
         main = self.gh.main_sha()
         prs = self.enforce_cap([p for p in self.gh.open_prs() if p["base"] == "main"], main)
@@ -606,6 +609,29 @@ class Bot:
         return "\n".join(lines)
 
 
+def env_value(path, *names):
+    """The first of `names` set in an env file (NAME=value lines)."""
+    for line in open(path):
+        name, _, value = line.strip().partition("=")
+        if name.strip() in names and value.strip():
+            return value.strip().strip("'\"")
+    raise RuntimeError(f"none of {', '.join(names)} is set in {path}")
+
+
+def keyring_unlocker(env_file):
+    """Unlock the desktop keyring with the passphrase in env_file whenever it is locked (after a reboot)."""
+    import desktop_keyring
+    passphrase = env_value(env_file, "PASSPHASE", "KEYRING_PASSPHRASE")
+
+    def unlock():
+        try:
+            if desktop_keyring.unlock(passphrase):
+                print("keyring: unlocked the default collection", flush=True)
+        except Exception as e:                                           # D-Bus errors are not RuntimeErrors
+            raise RuntimeError(f"keyring: {e}") from None
+    return unlock
+
+
 def code_changed(checkout):
     """True when origin/main's eval/ differs from the checkout the bot is running from."""
     try:
@@ -620,6 +646,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--repo", required=True)
     ap.add_argument("--gh-user", help="the account the bot acts as; gh is switched back to it if another is active")
+    ap.add_argument("--keyring-env", help="env file with PASSPHASE (or KEYRING_PASSPHRASE): unlock gh's keyring")
     where = ap.add_mutually_exclusive_group(required=True)
     where.add_argument("--box", help="user@host of a fixed GPU box")
     where.add_argument("--vast-env", help="env file with VAST_API_KEY (or VAST): rent RTX 5090 VMs on vast.ai")
@@ -643,7 +670,8 @@ def main():
     if args.vast_env:
         box.vast = vast.Vast(args.vast_cli, vast.read_key(Path(args.vast_env).expanduser()), box.ssh_ok,
                              max_dph=args.vast_max_dph, idle_minutes=args.vast_idle_minutes)
-    bot = Bot(GitHub(args.repo, args.gh_user), box)
+    unlock = keyring_unlocker(Path(args.keyring_env).expanduser()) if args.keyring_env else None
+    bot = Bot(GitHub(args.repo, args.gh_user), box, unlock=unlock)
     bot.setup()
     while True:
         try:

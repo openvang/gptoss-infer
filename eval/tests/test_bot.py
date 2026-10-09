@@ -358,3 +358,15 @@ def test_the_bot_switches_gh_back_to_its_account():
     assert calls == [("api", "user", "--jq", ".login")]
     Recording("o/r").ensure_account()                                  # no account configured: no check
     assert calls == [("api", "user", "--jq", ".login")]
+
+
+def test_the_keyring_is_unlocked_before_setup_and_every_round(tmp_path):
+    calls = []
+    clock = Clock()
+    b = bot.Bot(FakeGitHub([], clock), FakeBox({}), now=clock, unlock=lambda: calls.append("unlock"))
+    b.setup()
+    b.run_once()
+    b.run_once()
+    assert calls == ["unlock"] * 3
+    (tmp_path / "e.env").write_text("VAST=x\nPASSPHASE='p w'\n")
+    assert bot.env_value(tmp_path / "e.env", "PASSPHASE") == "p w"

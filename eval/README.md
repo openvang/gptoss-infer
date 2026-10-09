@@ -9,6 +9,7 @@ This directory is maintainer-owned. A PR that touches it is not scored.
 | `run_eval.py` | GPU box host | exports both commits, builds and measures each in fresh containers, judges, writes `verdict.json` |
 | `driver/driver.py` | inside the eval container | drives one build's C API, writes raw results; judges nothing |
 | `box/provision.sh` | GPU box | prepares a box: GPU and driver check, Docker GPU access, the judge's Python, the verified weights, the eval image |
+| `desktop_keyring.py` | trusted host | unlocks the keyring that holds `gh`'s login with its passphrase (gnome-keyring over D-Bus) |
 | `vast.py` | trusted host | rents and releases RTX 5090 VMs on vast.ai through the `vastai` CLI |
 | `image/Dockerfile` | GPU box | the eval image: a digest-pinned CUDA 13.0 devel base, plus cmake, ninja, python3 and numpy |
 | `tests/test_policy.py` | anywhere | policy unit tests, including an A/A false-tier rate check |
@@ -61,8 +62,10 @@ While a PR waits on the bot, one status label shows where it is. The verdict rep
 
 ## Running as a service
 
-The bot runs as a systemd user service that starts at boot (`loginctl enable-linger`). `gh` uses the maintainer
-account's keyring login; with `--gh-user`, the bot switches `gh` back to that account whenever another one is active.
+The bot runs as a systemd user service that starts at boot (`loginctl enable-linger`) and needs no login. `gh` uses
+the maintainer account's keyring login. With `--keyring-env`, the bot unlocks that keyring with its passphrase whenever
+it is locked, as after a reboot. With `--gh-user`, it switches `gh` back to that account whenever another one is
+active.
 SSH uses only the bot's key. The bot runs from its own clone of `main` and pulls it on every start. Every external
 call is time-limited, so a hung command can't stall it. With `--restart-on-update`, it exits after any round where
 `main` has changed `eval/`, so systemd restarts it on the new code.
@@ -74,9 +77,11 @@ Description=gptoss-infer PR eval bot
 
 [Service]
 Environment=APP=%h/.local/share/gptoss-eval-bot/app
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus
 UnsetEnvironment=SSH_AUTH_SOCK
 ExecStartPre=-/usr/bin/git -C ${APP} pull --ff-only -q
 ExecStart=/usr/bin/python3 -u ${APP}/eval/bot.py --repo openvang/gptoss-infer --gh-user <account> --restart-on-update \
+    --keyring-env <env file with PASSPHASE> \
     --vast-env <env file with VAST_API_KEY> --vast-cli <vastai> --key <ssh key> \
     --golden %h/.local/share/gptoss-eval-bot/golden_v1.safetensors
 Restart=always
@@ -93,7 +98,7 @@ systemctl --user daemon-reload && systemctl --user enable --now gptoss-eval-bot
 journalctl --user -u gptoss-eval-bot -f                                          # the bot's log
 ```
 
-`gh` must stay logged in as that account, and its keyring must be unlocked: after a reboot, a login unlocks it. One evaluation by hand, on a provisioned box:
+`gh` must stay logged in as that account. One evaluation by hand, on a provisioned box:
 
 ```bash
 /data/venv/bin/python eval/run_eval.py --repo /data/gptoss-eval/repo --base <sha> --cand <sha> \
